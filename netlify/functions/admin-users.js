@@ -240,6 +240,9 @@ exports.handler = async (event) => {
       const siteKey = operationRegion;
       const rawClientKey = body.clientKey || body.clientName || username;
       const clientKey = role === 'client' ? normalizeClientKey(rawClientKey) : '';
+      const isUniversalAccess = isUniversalAccessInput(role, sector, alertSectors);
+      const finalOperationRegion = operationRegion;
+      const finalSiteKey = siteKey;
       const clientName = role === 'client' ? String(body.clientName || clientKey).trim() : '';
       const clientLogoUrl = role === 'client' ? normalizeClientLogoUrl(body.clientLogoUrl) : '';
       const clientPlatformImageUrl = role === 'client' ? normalizeClientPlatformImageUrl(body.clientPlatformImageUrl) : '';
