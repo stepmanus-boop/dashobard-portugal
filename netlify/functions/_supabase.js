@@ -98,6 +98,7 @@ function mapUser(row) {
     clientKey: row.client_key || '',
     operationRegion: ['BR','PT'].includes(String(row.operation_region || '').toUpperCase()) ? String(row.operation_region).toUpperCase() : 'PT',
     siteKey: ['BR','PT'].includes(String(row.site_key || row.operation_region || '').toUpperCase()) ? String(row.site_key || row.operation_region).toUpperCase() : 'PT',
+    portalSite: ['BR','PT'].includes(String(row.portal_site || row.operation_region || '').toUpperCase()) ? String(row.portal_site || row.operation_region).toUpperCase() : 'PT',
     clientName: row.client_name || row.client_key || '',
     clientLogoUrl: row.client_logo_url || '',
     clientPlatformImageUrl: platformImageUrl,
@@ -270,6 +271,7 @@ async function insertUser(input) {
     client_key: input.clientKey || '',
     operation_region: String(input.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT',
     site_key: String(input.siteKey || input.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT',
+    portal_site: String(input.portalSite || input.siteKey || input.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT',
     client_name: input.clientName || input.clientKey || '',
     client_logo_url: input.clientLogoUrl || '',
     client_platform_image_url: input.clientPlatformImageUrl || '',
@@ -299,6 +301,7 @@ async function updateUser(userId, updates) {
   if ('clientKey' in updates) payload.client_key = updates.clientKey || '';
   if ('operationRegion' in updates) payload.operation_region = String(updates.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT';
   if ('siteKey' in updates) payload.site_key = String(updates.siteKey || updates.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT';
+  if ('portalSite' in updates || 'operationRegion' in updates || 'siteKey' in updates) payload.portal_site = String(updates.portalSite || updates.siteKey || updates.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT';
   if ('clientName' in updates) payload.client_name = updates.clientName || updates.clientKey || '';
   if ('clientLogoUrl' in updates) payload.client_logo_url = updates.clientLogoUrl || '';
   if ('clientPlatformImageUrl' in updates) payload.client_platform_image_url = updates.clientPlatformImageUrl || '';

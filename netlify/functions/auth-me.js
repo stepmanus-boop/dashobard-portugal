@@ -51,6 +51,7 @@ exports.handler = async (event) => {
       clientKey: user.clientKey || '',
       operationRegion: user.operationRegion || 'PT',
       siteKey: user.siteKey || user.operationRegion || 'PT',
+      portalSite: user.portalSite || user.siteKey || user.operationRegion || 'PT',
       clientName: user.clientName || '',
       clientLogoUrl: user.clientLogoUrl || '',
       clientPlatformImageUrl: user.clientPlatformImageUrl || '',
