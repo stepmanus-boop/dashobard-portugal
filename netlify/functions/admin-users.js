@@ -90,11 +90,84 @@ function inferUserOperationRegion(user = {}) {
   return 'BR';
 }
 
-function usersConflictByLogin(user, username, operationRegion, isUniversalAccess = false) {
-  if (normalizeText(user.username) !== normalizeText(username)) return false;
-  const userUniversal = isUniversalAccessInput(user.role, user.sector, user.alertSectors);
-  if (ensureUniversalAccessFlag(isUniversalAccess) || userUniversal) return true;
-  return inferUserOperationRegion(user) === normalizeOperationRegion(operationRegion);
+function getUserRegionForConflict(user = {}) {
+  const explicit = String(user.operationRegion || user.siteKey || user.portalSite || '').trim().toUpperCase();
+  if (explicit === 'BR' || explicit === 'PT') return explicit;
+
+  const clientKey = String(user.clientKey || user.client_key || '').trim().toUpperCase();
+  if (clientKey.endsWith('_BR')) return 'BR';
+  if (clientKey.endsWith('_PT')) return 'PT';
+
+  // Legado sem região é tratado como BR para não bloquear Portugal.
+  return 'BR';
+}
+
+function getLoginConflict(user, username, operationRegion, isUniversalAccess = false) {
+  if (normalizeText(stripHiddenRegionSuffix(user.username)) !== normalizeText(stripHiddenRegionSuffix(username))) return null;
+
+  const targetRegion = normalizeOperationRegion(operationRegion);
+  const existingRegion = getUserRegionForConflict(user);
+  const existingUniversal = isUniversalAccessInput(user.role, user.sector, user.alertSectors);
+  const targetUniversal = Boolean(isUniversalAccess);
+
+  // Admin e PCP são universais: não pode repetir login.
+  if (existingUniversal || targetUniversal) {
+    return {
+      type: 'universal',
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      sector: user.sector,
+      operationRegion: existingRegion,
+      clientKey: user.clientKey || '',
+    };
+  }
+
+  // Usuários comuns/clientes: só bloqueia se for mesmo login + mesmo BR/PT.
+  if (existingRegion === targetRegion) {
+    return {
+      type: 'same-region',
+      username: user.username,
+      name: user.name,
+      role: user.role,
+      sector: user.sector,
+      operationRegion: existingRegion,
+      clientKey: user.clientKey || '',
+    };
+  }
+
+  return null;
+}
+
+
+function shouldStoreWithHiddenRegionSuffix(users = [], username = '', operationRegion = 'PT') {
+  const visible = normalizeText(stripHiddenRegionSuffix(username));
+  if (!visible) return false;
+  return users.some((user) => {
+    if (normalizeText(stripHiddenRegionSuffix(user.username)) !== visible) return false;
+    const existingUniversal = isUniversalAccessInput(user.role, user.sector, user.alertSectors);
+    if (existingUniversal) return false;
+    return getUserRegionForConflict(user) !== normalizeOperationRegion(operationRegion);
+  });
+}
+
+function getStoredUsernameForRegion(users = [], username = '', operationRegion = 'PT') {
+  const clean = stripHiddenRegionSuffix(username).trim();
+  return shouldStoreWithHiddenRegionSuffix(users, clean, operationRegion)
+    ? buildHiddenRegionUsername(clean, operationRegion)
+    : clean;
+}
+
+function buildLoginConflictMessage(conflict, targetRegion) {
+  if (!conflict) return 'Já existe um usuário com esse login.';
+  return [
+    'Já existe um usuário com esse login neste mesmo país/ambiente.',
+    `Conflito: ${conflict.username || '-'} • ${conflict.name || '-'}`,
+    `Perfil: ${conflict.role || '-'} / ${conflict.sector || '-'}`,
+    `Ambiente existente: ${conflict.operationRegion || '-'}`,
+    `Ambiente solicitado: ${targetRegion || '-'}`,
+    conflict.clientKey ? `Client Key existente: ${conflict.clientKey}` : '',
+  ].filter(Boolean).join(' ');
 }
 
 
@@ -260,17 +333,26 @@ exports.handler = async (event) => {
         return jsonResponse(400, { ok: false, error: 'Informe o cliente vinculado ao Portal do Cliente.' });
       }
 
-      const exists = users.some((user) => user.id !== userId && usersConflictByLogin(user, username, operationRegion, isUniversalAccessInput(role, sector, alertSectors)));
-      if (exists) {
-        return jsonResponse(409, { ok: false, error: 'Já existe um usuário universal ou um usuário com esse login neste país/ambiente.' });
+      const loginConflict = users
+        .filter((user) => user.id !== userId)
+        .map((user) => getLoginConflict(user, username, operationRegion, isUniversalAccessInput(role, sector, alertSectors)))
+        .find(Boolean);
+      if (loginConflict) {
+        return jsonResponse(409, {
+          ok: false,
+          error: buildLoginConflictMessage(loginConflict, operationRegion),
+          conflict: loginConflict,
+        });
       }
       if (current.id === admin.session.sub && role !== 'admin') {
         return jsonResponse(400, { ok: false, error: 'O admin atual não pode remover o próprio acesso.' });
       }
 
+      const storedUsername = getStoredUsernameForRegion(users.filter((user) => user.id !== userId), username, operationRegion);
+
       const saved = await updateUser(userId, {
         name,
-        username,
+        username: storedUsername,
         role,
         sector,
         alertSectors: role === 'admin' ? [] : alertSectors,
@@ -359,15 +441,23 @@ exports.handler = async (event) => {
     }
 
     const users = await listUsers();
-    const exists = users.some((user) => usersConflictByLogin(user, username, operationRegion, isUniversalAccessInput(role, sector, alertSectors)));
-    if (exists) {
-      return jsonResponse(409, { ok: false, error: 'Já existe um usuário universal ou um usuário com esse login neste país/ambiente.' });
+    const loginConflict = users
+      .map((user) => getLoginConflict(user, username, operationRegion, isUniversalAccessInput(role, sector, alertSectors)))
+      .find(Boolean);
+    if (loginConflict) {
+      return jsonResponse(409, {
+        ok: false,
+        error: buildLoginConflictMessage(loginConflict, operationRegion),
+        conflict: loginConflict,
+      });
     }
+
+    const storedUsername = getStoredUsernameForRegion(users, username, operationRegion);
 
     const saved = await insertUser({
       id: `u_${crypto.randomBytes(6).toString('hex')}`,
       name,
-      username,
+      username: storedUsername,
       passwordHash: hashPassword(password),
       role,
       sector,
@@ -377,6 +467,7 @@ exports.handler = async (event) => {
       clientKey,
       operationRegion,
       siteKey,
+      portalSite: operationRegion,
       clientName,
       clientLogoUrl,
       clientPlatformImageUrl,
@@ -390,3 +481,14 @@ exports.handler = async (event) => {
     return jsonResponse(500, { ok: false, error: error.message || 'Falha ao criar usuário.' });
   }
 };
+function stripHiddenRegionSuffix(username = '') {
+  return String(username || '').replace(/__(BR|PT)$/i, '');
+}
+
+function buildHiddenRegionUsername(username = '', region = 'PT') {
+  const clean = stripHiddenRegionSuffix(username).trim();
+  const reg = normalizeOperationRegion(region);
+  return clean ? `${clean}__${reg}` : '';
+}
+
+

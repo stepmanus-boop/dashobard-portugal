@@ -79,6 +79,17 @@ async function supabaseWriteWithClientPlatformFallback(path, options, payload, f
   }
 }
 
+
+function stripHiddenRegionSuffix(username = '') {
+  return String(username || '').replace(/__(BR|PT)$/i, '');
+}
+
+function buildHiddenRegionUsername(username = '', region = 'PT') {
+  const clean = stripHiddenRegionSuffix(username).trim();
+  const reg = String(region || 'PT').trim().toUpperCase() === 'BR' ? 'BR' : 'PT';
+  return clean ? `${clean}__${reg}` : '';
+}
+
 function mapUser(row) {
   if (!row) return null;
   const platformImages = row.client_platform_images && typeof row.client_platform_images === 'object'
@@ -88,7 +99,8 @@ function mapUser(row) {
   return {
     id: row.id,
     name: row.name,
-    username: row.username,
+    username: stripHiddenRegionSuffix(row.username),
+    rawUsername: row.username,
     passwordHash: row.password_hash,
     role: row.role === 'admin' ? 'admin' : (row.role === 'client' ? 'client' : 'sector'),
     sector: normalizeSectorValue(row.sector || (row.role === 'admin' ? 'all' : '')), 
@@ -227,19 +239,37 @@ function isUniversalAccessRow(row = {}) {
 }
 
 async function getUserByUsername(username, options = {}) {
-  const q = encodeURIComponent(String(username || '').trim());
+  const cleanUsername = stripHiddenRegionSuffix(String(username || '').trim());
+  const q = encodeURIComponent(cleanUsername);
   const region = String(options.operationRegion || options.region || options.siteKey || '').trim().toUpperCase();
+  const hiddenUsername = region ? buildHiddenRegionUsername(cleanUsername, region) : '';
 
-  const allRows = await supabaseFetch(`/rest/v1/users?select=*&username=eq.${q}`);
-  const rows = Array.isArray(allRows) ? allRows : [];
+  const queryParts = [cleanUsername];
+  if (hiddenUsername && hiddenUsername !== cleanUsername) queryParts.push(hiddenUsername);
 
-  // Admin e PCP são universais pela regra de acesso, mesmo com operation_region BR/PT.
+  const rows = [];
+  for (const candidate of queryParts) {
+    const encoded = encodeURIComponent(candidate);
+    const result = await supabaseFetch(`/rest/v1/users?select=*&username=eq.${encoded}`);
+    if (Array.isArray(result)) rows.push(...result);
+  }
+
+  // Fallback: se não achou, busca todos com prefixo visual para detectar legado.
+  if (!rows.length) {
+    const fallback = await supabaseFetch(`/rest/v1/users?select=*&username=ilike.${q}%`);
+    if (Array.isArray(fallback)) rows.push(...fallback);
+  }
+
+  // Admin e PCP são universais pela regra de acesso.
   const universal = rows.find((row) => isUniversalAccessRow(row) && row.active !== false);
   if (universal) return mapUser(universal);
 
   if (region) {
     const regional = rows.find((row) => {
-      const rowRegion = String(row.operation_region || row.site_key || '').trim().toUpperCase()
+      const raw = String(row.username || '');
+      const rowRegion = String(row.operation_region || row.site_key || row.portal_site || '').trim().toUpperCase()
+        || (raw.toUpperCase().endsWith('__BR') ? 'BR' : '')
+        || (raw.toUpperCase().endsWith('__PT') ? 'PT' : '')
         || (String(row.client_key || '').trim().toUpperCase().endsWith('_BR') ? 'BR' : '')
         || (String(row.client_key || '').trim().toUpperCase().endsWith('_PT') ? 'PT' : '')
         || 'BR';
