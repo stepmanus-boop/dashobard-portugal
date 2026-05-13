@@ -320,6 +320,7 @@ const adminUsersListEl = document.getElementById("admin-users-list");
 const adminPresenceSummaryEl = document.getElementById("admin-presence-summary");
 const adminPresenceListEl = document.getElementById("admin-presence-list");
 const adminAlertsListEl = document.getElementById("admin-alerts-list");
+const adminAutoLoginListEl = document.getElementById("admin-auto-login-list");
 const adminAlertSearchEl = document.getElementById("admin-alert-search");
 const githubSyncBadgeEl = document.getElementById("github-sync-badge");
 const adminSyncButtonEl = document.getElementById("admin-sync-button");
@@ -3523,11 +3524,65 @@ function isClientUser(user = state.user) {
 }
 
 
-function getOperationRegion(user = state.user) {
-  const raw = String(user?.operationRegion || user?.region || user?.environment || adminUserOperationRegionEl?.value || window.localStorage.getItem('step_operation_region') || 'PT').trim().toUpperCase();
-  if (['BR', 'BRASIL', 'BRAZIL'].includes(raw)) return 'BR';
-  return 'PT';
+function getOperationRegion(user = null) {
+  const fromAdminSelect = adminUserOperationRegionEl?.value;
+  const raw = String(
+    fromAdminSelect
+    || user?.operationRegion
+    || user?.region
+    || user?.environment
+    || window.localStorage.getItem('step_operation_region')
+    || 'PT'
+  ).trim().toUpperCase();
+
+  return ['BR', 'BRASIL', 'BRAZIL'].includes(raw) ? 'BR' : 'PT';
 }
+
+
+function syncOperationRegionButtons(value = 'PT') {
+  const normalized = String(value || 'PT').trim().toUpperCase() === 'BR' ? 'BR' : 'PT';
+
+  if (adminUserOperationRegionEl) {
+    adminUserOperationRegionEl.value = normalized;
+  }
+
+  document.querySelectorAll('[data-operation-region-option]').forEach((button) => {
+    button.classList.toggle(
+      'is-active',
+      String(button.dataset.operationRegionOption || '').toUpperCase() === normalized
+    );
+  });
+
+  try {
+    window.localStorage.setItem('step_operation_region', normalized);
+  } catch {}
+}
+
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-operation-region-option]');
+  if (!button) return;
+
+  const nextRegion = String(button.dataset.operationRegionOption || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT';
+  syncOperationRegionButtons(nextRegion);
+
+  if (adminUserClientNameEl && adminUserClientKeyEl) {
+    const cleanCurrent = String(adminUserClientKeyEl.value || '').replace(/_(BR|PT)$/i, '');
+    const source = adminUserClientNameEl.value || cleanCurrent;
+    adminUserClientKeyEl.value = buildClientKey(source, nextRegion);
+  }
+});
+
+if (adminUserOperationRegionEl) {
+  adminUserOperationRegionEl.addEventListener('change', () => {
+    syncOperationRegionButtons(adminUserOperationRegionEl.value || 'PT');
+    if (adminUserClientNameEl && adminUserClientKeyEl) {
+      const cleanCurrent = String(adminUserClientKeyEl.value || '').replace(/_(BR|PT)$/i, '');
+      const source = adminUserClientNameEl.value || cleanCurrent;
+      adminUserClientKeyEl.value = buildClientKey(source, getOperationRegion());
+    }
+  });
+}
+
 
 function buildProjectsApiUrl(params = {}) {
   const query = new URLSearchParams();
@@ -9788,7 +9843,7 @@ function startEditUser(userId) {
   document.getElementById("admin-user-username").value = user.username || "";
   document.getElementById("admin-user-password").value = "";
   document.getElementById("admin-user-role").value = user.role === "admin" ? "admin" : (user.role === "client" ? "client" : "sector");
-  syncOperationRegionButtons(getOperationRegion(user));
+  syncOperationRegionButtons(user?.operationRegion || user?.siteKey || user?.portalSite || 'PT');
   document.getElementById("admin-user-sector").value = user.role === "client" ? "all" : (user.sector || "all");
   setSelectedAdminAlertSectors(Array.isArray(user.alertSectors) ? user.alertSectors : [user.sector]);
   state.adminProjectPmSearchQuery = "";
@@ -9846,6 +9901,7 @@ async function syncAdminDataToGithub() {
 function renderAdminUsersList(users = []) {
   if (!adminUsersListEl) return;
   adminUsersListEl._cachedUsers = users;
+  renderAdminAutoLoginList(users);
   if (!users.length) {
     adminUsersListEl.innerHTML = '<div class="empty-state">Nenhum usuário cadastrado.</div>';
     return;
@@ -9890,6 +9946,62 @@ function renderAdminUsersList(users = []) {
     `;
   }).join("");
 }
+function getAutoLoginRegion() {
+  const active = document.querySelector('[data-auto-login-region].is-active');
+  const raw = String(active?.dataset?.autoLoginRegion || adminUserOperationRegionEl?.value || getOperationRegion()).toUpperCase();
+  return raw === 'BR' ? 'BR' : 'PT';
+}
+
+function buildAutoLoginUrl(user, region = getAutoLoginRegion()) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('login', String(user?.username || '').replace(/__(BR|PT)$/i, ''));
+  url.searchParams.set('region', region === 'BR' ? 'BR' : 'PT');
+  url.searchParams.set('autoLogin', '1');
+  return url.toString();
+}
+
+function renderAdminAutoLoginList(users = adminUsersListEl?._cachedUsers || []) {
+  if (!adminAutoLoginListEl) return;
+  const region = getAutoLoginRegion();
+  const filtered = (Array.isArray(users) ? users : [])
+    .filter((user) => user && user.active !== false)
+    .filter((user) => {
+      if (user.role === 'admin') return true;
+      const sector = normalizeSectorValue(user.sector);
+      if (sector === 'pcp') return true;
+      const userRegion = String(user.operationRegion || user.siteKey || user.portalSite || 'PT').toUpperCase();
+      return userRegion === region;
+    });
+
+  if (!filtered.length) {
+    adminAutoLoginListEl.innerHTML = `<div class="empty-state">Nenhum usuário encontrado para ${region}.</div>`;
+    return;
+  }
+
+  adminAutoLoginListEl.innerHTML = filtered.map((user) => {
+    const visibleLogin = String(user.username || '').replace(/__(BR|PT)$/i, '');
+    const url = buildAutoLoginUrl(user, region);
+    return `
+      <article class="admin-list-item">
+        <div class="admin-user-title-row">
+          <strong>${escapeHtml(user.name || visibleLogin)}</strong>
+          <span class="admin-badge">${escapeHtml(region)}</span>
+        </div>
+        <div class="admin-list-item-meta">
+          <span>Login visível: ${escapeHtml(visibleLogin)}</span>
+          <span>Perfil: ${escapeHtml(user.role === 'client' ? 'Cliente' : (user.role === 'admin' ? 'Admin' : sectorLabel(user.sector)))}</span>
+          ${user.clientKey ? `<span>Client Key: ${escapeHtml(user.clientKey)}</span>` : ''}
+        </div>
+        <div class="manual-alert-actions">
+          <button class="ghost-button ghost-button--compact" type="button" data-copy-auto-login="${escapeHtml(url)}">Copiar link</button>
+          <a class="ghost-button ghost-button--compact" href="${escapeHtml(url)}" target="_blank" rel="noopener">Abrir</a>
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+
 
 function getFilteredAdminAlerts() {
   const baseAlerts = Array.isArray(state.manualAlerts) ? state.manualAlerts : [];
@@ -10121,6 +10233,8 @@ async function handleLoginSubmit(event) {
       body: JSON.stringify({
         username: String(loginUsernameEl.value || "").trim(),
         password: String(loginPasswordEl.value || "").trim(),
+        operationRegion: getOperationRegion(),
+        siteKey: getOperationRegion(),
       }),
     });
     const data = await response.json().catch(() => null);
@@ -11157,8 +11271,9 @@ async function handleAdminUserSubmit(event) {
       username: String(document.getElementById("admin-user-username").value || "").trim(),
       password: String(document.getElementById("admin-user-password").value || "").trim(),
       role: document.getElementById("admin-user-role").value,
-      operationRegion: getOperationRegion(),
-      siteKey: getOperationRegion(),
+      operationRegion: String(adminUserOperationRegionEl?.value || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT',
+      siteKey: String(adminUserOperationRegionEl?.value || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT',
+      portalSite: String(adminUserOperationRegionEl?.value || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT',
       sector: document.getElementById("admin-user-role").value === 'client' ? 'all' : document.getElementById("admin-user-sector").value,
       alertSectors: document.getElementById("admin-user-role").value === 'client' ? [] : getSelectedAdminAlertSectors(),
       projectPmAliases: adminUserFormHasProjectsScope() ? getAdminProjectPmAliases() : [],

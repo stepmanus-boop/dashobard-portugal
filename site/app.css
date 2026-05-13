@@ -7182,3 +7182,18 @@ body.client-mode .client-logo-box img,
   border-color: rgba(139, 224, 255, .8);
   color: #ffffff;
 }
+
+/* ===== v38.4 - Login automático ===== */
+.muted-small {
+  color: rgba(191, 233, 255, .72);
+  font-size: .82rem;
+  margin: 4px 0 0;
+}
+#admin-auto-login-list .manual-alert-actions {
+  margin-top: 10px;
+}
+
+/* ===== v38.5 - Região BR/PT corrigida ===== */
+.country-pill.is-active {
+  box-shadow: 0 0 0 2px rgba(139, 224, 255, .35), 0 0 18px rgba(30, 134, 200, .35);
+}
