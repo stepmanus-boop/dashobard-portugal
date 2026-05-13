@@ -96,8 +96,8 @@ function mapUser(row) {
     projectPmAliases: Array.isArray(row.project_pm_aliases) ? row.project_pm_aliases.filter(Boolean) : [],
     qualityCompetencies: Array.isArray(row.quality_competencies) ? row.quality_competencies.filter(Boolean) : [],
     clientKey: row.client_key || '',
-    operationRegion: row.operation_region || 'PT',
-    siteKey: row.site_key || row.operation_region || 'PT',
+    operationRegion: ['BR','PT'].includes(String(row.operation_region || '').toUpperCase()) ? String(row.operation_region).toUpperCase() : 'PT',
+    siteKey: ['BR','PT'].includes(String(row.site_key || row.operation_region || '').toUpperCase()) ? String(row.site_key || row.operation_region).toUpperCase() : 'PT',
     clientName: row.client_name || row.client_key || '',
     clientLogoUrl: row.client_logo_url || '',
     clientPlatformImageUrl: platformImageUrl,
@@ -232,7 +232,7 @@ async function getUserByUsername(username, options = {}) {
   const allRows = await supabaseFetch(`/rest/v1/users?select=*&username=eq.${q}`);
   const rows = Array.isArray(allRows) ? allRows : [];
 
-  // Admin e PCP são universais: podem acessar qualquer site/país.
+  // Admin e PCP são universais pela regra de acesso, mesmo com operation_region BR/PT.
   const universal = rows.find((row) => isUniversalAccessRow(row) && row.active !== false);
   if (universal) return mapUser(universal);
 
@@ -268,8 +268,8 @@ async function insertUser(input) {
     project_pm_aliases: Array.isArray(input.projectPmAliases) ? input.projectPmAliases : [],
     quality_competencies: Array.isArray(input.qualityCompetencies) ? input.qualityCompetencies : [],
     client_key: input.clientKey || '',
-    operation_region: input.operationRegion || 'PT',
-    site_key: input.siteKey || input.operationRegion || 'PT',
+    operation_region: String(input.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT',
+    site_key: String(input.siteKey || input.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT',
     client_name: input.clientName || input.clientKey || '',
     client_logo_url: input.clientLogoUrl || '',
     client_platform_image_url: input.clientPlatformImageUrl || '',
@@ -297,8 +297,8 @@ async function updateUser(userId, updates) {
   if ('projectPmAliases' in updates) payload.project_pm_aliases = Array.isArray(updates.projectPmAliases) ? updates.projectPmAliases : [];
   if ('qualityCompetencies' in updates) payload.quality_competencies = Array.isArray(updates.qualityCompetencies) ? updates.qualityCompetencies : [];
   if ('clientKey' in updates) payload.client_key = updates.clientKey || '';
-  if ('operationRegion' in updates) payload.operation_region = updates.operationRegion || 'PT';
-  if ('siteKey' in updates) payload.site_key = updates.siteKey || updates.operationRegion || 'PT';
+  if ('operationRegion' in updates) payload.operation_region = String(updates.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT';
+  if ('siteKey' in updates) payload.site_key = String(updates.siteKey || updates.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT';
   if ('clientName' in updates) payload.client_name = updates.clientName || updates.clientKey || '';
   if ('clientLogoUrl' in updates) payload.client_logo_url = updates.clientLogoUrl || '';
   if ('clientPlatformImageUrl' in updates) payload.client_platform_image_url = updates.clientPlatformImageUrl || '';

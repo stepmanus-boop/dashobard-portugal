@@ -3526,8 +3526,7 @@ function isClientUser(user = state.user) {
 function getOperationRegion(user = state.user) {
   const raw = String(user?.operationRegion || user?.region || user?.environment || adminUserOperationRegionEl?.value || window.localStorage.getItem('step_operation_region') || 'PT').trim().toUpperCase();
   if (['BR', 'BRASIL', 'BRAZIL'].includes(raw)) return 'BR';
-  if (['PT', 'PORTUGAL'].includes(raw)) return 'PT';
-  return raw || 'PT';
+  return 'PT';
 }
 
 function buildProjectsApiUrl(params = {}) {

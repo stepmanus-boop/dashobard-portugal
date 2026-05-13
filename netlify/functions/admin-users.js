@@ -1,8 +1,7 @@
 function normalizeOperationRegion(value = 'PT') {
   const normalized = String(value || 'PT').trim().toUpperCase();
   if (['BR', 'BRASIL', 'BRAZIL'].includes(normalized)) return 'BR';
-  if (['PT', 'PORTUGAL'].includes(normalized)) return 'PT';
-  return normalized || 'PT';
+  return 'PT';
 }
 
 const crypto = require('crypto');
@@ -72,6 +71,11 @@ function isUniversalAccessInput(role, sector, alertSectors = []) {
   return normalizedRole === 'admin' || normalizedSector === 'pcp' || alerts.includes('pcp');
 }
 
+
+function ensureUniversalAccessFlag(value) {
+  return typeof value === 'boolean' ? value : false;
+}
+
 function inferUserOperationRegion(user = {}) {
   const explicit = String(user.operationRegion || user.siteKey || '').trim().toUpperCase();
   if (explicit) return normalizeOperationRegion(explicit);
@@ -86,10 +90,10 @@ function inferUserOperationRegion(user = {}) {
   return 'BR';
 }
 
-function usersConflictByLogin(user, username, operationRegion, isUniversalAccess) {
+function usersConflictByLogin(user, username, operationRegion, isUniversalAccess = false) {
   if (normalizeText(user.username) !== normalizeText(username)) return false;
   const userUniversal = isUniversalAccessInput(user.role, user.sector, user.alertSectors);
-  if (isUniversalAccess || userUniversal) return true;
+  if (ensureUniversalAccessFlag(isUniversalAccess) || userUniversal) return true;
   return inferUserOperationRegion(user) === normalizeOperationRegion(operationRegion);
 }
 
@@ -252,8 +256,7 @@ exports.handler = async (event) => {
         return jsonResponse(400, { ok: false, error: 'Informe o cliente vinculado ao Portal do Cliente.' });
       }
 
-      const currentIsUniversalAccess = isUniversalAccessInput(role, sector, alertSectors);
-      const exists = users.some((user) => user.id !== userId && usersConflictByLogin(user, username, operationRegion, currentIsUniversalAccess));
+      const exists = users.some((user) => user.id !== userId && usersConflictByLogin(user, username, operationRegion, isUniversalAccess));
       if (exists) {
         return jsonResponse(409, { ok: false, error: 'Já existe um usuário universal ou um usuário com esse login neste país/ambiente.' });
       }
@@ -351,8 +354,7 @@ exports.handler = async (event) => {
     }
 
     const users = await listUsers();
-    const currentIsUniversalAccess = isUniversalAccessInput(role, sector, alertSectors);
-      const exists = users.some((user) => usersConflictByLogin(user, username, operationRegion, currentIsUniversalAccess));
+    const exists = users.some((user) => usersConflictByLogin(user, username, operationRegion, isUniversalAccess));
     if (exists) {
       return jsonResponse(409, { ok: false, error: 'Já existe um usuário universal ou um usuário com esse login neste país/ambiente.' });
     }
