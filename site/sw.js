@@ -1,0 +1,126 @@
+const CACHE_NAME = "step-gerencia-pwa-v32-smartsheet-cache-quente";
+// Versão v28: preserva cache local entre logouts e usa caminho rápido pós-login
+// - Mantém assets do app shell versionados para liberar app.js corrigido imediatamente
+// - API continua sem cache no Service Worker; dados operacionais usam cache local do app
+// - Interceptação de /api restrita à própria origem para evitar efeitos colaterais
+const APP_SHELL = [
+  "/",
+  "/app.css",
+  "/app.js",
+  "/manifest.webmanifest",
+  "/assets/step-logo.png",
+  "/assets/icon-192.png",
+  "/assets/icon-512.png",
+  "/assets/apple-touch-icon.png",
+];
+
+const CORE_ASSETS = new Set([
+  "/",
+  "/index.html",
+  "/app.css",
+  "/app.js",
+  "/manifest.webmanifest",
+  "/sw.js",
+]);
+
+function toUrl(input) {
+  try {
+    return new URL(input, self.location.origin);
+  } catch {
+    return null;
+  }
+}
+
+function isCoreAsset(request) {
+  const url = toUrl(request.url);
+  if (!url || url.origin !== self.location.origin) return false;
+  return CORE_ASSETS.has(url.pathname);
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL))
+      .then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+  if (request.method !== "GET") return;
+
+  const url = toUrl(request.url);
+  if (url && url.origin === self.location.origin && url.pathname.startsWith("/api/")) {
+    event.respondWith(
+      fetch(request, { cache: "no-store" }).catch(() =>
+        new Response(JSON.stringify({ ok: false, offline: true, error: "Sem conexão no momento." }), {
+          headers: { "Content-Type": "application/json" },
+        })
+      )
+    );
+    return;
+  }
+
+  if (isCoreAsset(request)) {
+    event.respondWith(
+      fetch(request, { cache: "no-store" })
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => {});
+          return response;
+        })
+        .catch(() => caches.match(request).then((cached) => cached || caches.match("/")))
+    );
+    return;
+  }
+
+  event.respondWith(
+    caches.match(request).then((cached) => {
+      return cached || fetch(request).then((response) => {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => {});
+        return response;
+      }).catch(() => caches.match("/"));
+    })
+  );
+});
+
+
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (_) {}
+  const title = data.title || 'Novo alerta';
+  const options = {
+    body: data.body || 'Você recebeu uma nova notificação.',
+    icon: '/assets/icon-192.png',
+    badge: '/assets/icon-192.png',
+    tag: data.tag || 'step-alert',
+    data: { url: data.url || '/' },
+    requireInteraction: true,
+    renotify: true,
+    vibrate: [220, 120, 220],
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const targetUrl = event.notification?.data?.url || '/';
+  event.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+    for (const client of clientList) {
+      if ('focus' in client) {
+        client.navigate(targetUrl).catch(() => {});
+        return client.focus();
+      }
+    }
+    if (clients.openWindow) return clients.openWindow(targetUrl);
+  }));
+});
