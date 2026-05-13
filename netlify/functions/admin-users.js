@@ -252,7 +252,8 @@ exports.handler = async (event) => {
         return jsonResponse(400, { ok: false, error: 'Informe o cliente vinculado ao Portal do Cliente.' });
       }
 
-      const exists = users.some((user) => user.id !== userId && usersConflictByLogin(user, username, operationRegion, isUniversalAccess));
+      const currentIsUniversalAccess = isUniversalAccessInput(role, sector, alertSectors);
+      const exists = users.some((user) => user.id !== userId && usersConflictByLogin(user, username, operationRegion, currentIsUniversalAccess));
       if (exists) {
         return jsonResponse(409, { ok: false, error: 'Já existe um usuário universal ou um usuário com esse login neste país/ambiente.' });
       }
@@ -350,7 +351,8 @@ exports.handler = async (event) => {
     }
 
     const users = await listUsers();
-    const exists = users.some((user) => usersConflictByLogin(user, username, operationRegion, isUniversalAccess));
+    const currentIsUniversalAccess = isUniversalAccessInput(role, sector, alertSectors);
+      const exists = users.some((user) => usersConflictByLogin(user, username, operationRegion, currentIsUniversalAccess));
     if (exists) {
       return jsonResponse(409, { ok: false, error: 'Já existe um usuário universal ou um usuário com esse login neste país/ambiente.' });
     }
