@@ -3537,6 +3537,17 @@ function buildProjectsApiUrl(params = {}) {
   return `/api/projects?${query.toString()}`;
 }
 
+function buildClientKey(clientName, region = 'PT') {
+  const base = String(clientName || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  if (!base) return '';
+  return `${base}_${region}`;
+}
+
 function getClientPortalName(user = state.user) {
   return String(user?.clientName || user?.clientKey || user?.name || 'Cliente').trim() || 'Cliente';
 }
@@ -9754,6 +9765,7 @@ function resetAdminUserForm() {
   setAdminQualityCompetencies([]);
   if (adminUserClientKeyEl) adminUserClientKeyEl.value = '';
   if (adminUserClientNameEl) adminUserClientNameEl.value = '';
+  if (adminUserClientKeyEl) adminUserClientKeyEl.value = '';
   if (adminUserClientLogoUrlEl) adminUserClientLogoUrlEl.value = '';
   resetAdminLogoEditor('');
   if (adminUserClientLogoFileEl) adminUserClientLogoFileEl.value = '';
@@ -9784,6 +9796,7 @@ function startEditUser(userId) {
   setAdminQualityCompetencies(user.qualityCompetencies || []);
   if (adminUserClientKeyEl) adminUserClientKeyEl.value = user.clientKey || '';
   if (adminUserClientNameEl) adminUserClientNameEl.value = user.clientName || '';
+  if (adminUserClientKeyEl) adminUserClientKeyEl.value = user.clientKey || buildClientKey(user.clientName || '', getOperationRegion(user));
   if (adminUserClientLogoUrlEl) adminUserClientLogoUrlEl.value = user.clientLogoUrl || '';
   resetAdminLogoEditor(user.clientLogoUrl || '');
   if (adminUserClientLogoFileEl) adminUserClientLogoFileEl.value = '';
@@ -11142,7 +11155,8 @@ async function handleAdminUserSubmit(event) {
       username: String(document.getElementById("admin-user-username").value || "").trim(),
       password: String(document.getElementById("admin-user-password").value || "").trim(),
       role: document.getElementById("admin-user-role").value,
-      operationRegion: adminUserOperationRegionEl?.value || 'BR',
+      operationRegion: adminUserOperationRegionEl?.value || 'PT',
+      siteKey: adminUserOperationRegionEl?.value || 'PT',
       sector: document.getElementById("admin-user-role").value === 'client' ? 'all' : document.getElementById("admin-user-sector").value,
       alertSectors: document.getElementById("admin-user-role").value === 'client' ? [] : getSelectedAdminAlertSectors(),
       projectPmAliases: adminUserFormHasProjectsScope() ? getAdminProjectPmAliases() : [],

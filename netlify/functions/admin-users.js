@@ -156,6 +156,8 @@ exports.handler = async (event) => {
           projectPmAliases: Array.isArray(user.projectPmAliases) ? user.projectPmAliases : [],
           qualityCompetencies: Array.isArray(user.qualityCompetencies) ? user.qualityCompetencies : [],
           clientKey: user.clientKey || '',
+          operationRegion: user.operationRegion || 'PT',
+          siteKey: user.siteKey || user.operationRegion || 'PT',
           clientName: user.clientName || '',
           clientLogoUrl: user.clientLogoUrl || '',
           clientPlatformImageUrl: user.clientPlatformImageUrl || '',
@@ -199,7 +201,10 @@ exports.handler = async (event) => {
       const alertSectors = role !== 'sector' ? [] : normalizeSectorList('', body.alertSectors);
       const projectPmAliases = isProjectsUser(role, sector, alertSectors) ? normalizeProjectPmAliases(body.projectPmAliases) : [];
       const qualityCompetencies = isQualityUser(role, sector, alertSectors) ? normalizeQualityCompetencies(body.qualityCompetencies) : [];
-      const clientKey = role === 'client' ? normalizeClientKey(body.clientKey || body.clientName || username) : '';
+      const operationRegion = normalizeOperationRegion(body.operationRegion || 'PT');
+      const siteKey = operationRegion;
+      const rawClientKey = body.clientKey || body.clientName || username;
+      const clientKey = role === 'client' ? normalizeClientKey(rawClientKey) : '';
       const clientName = role === 'client' ? String(body.clientName || clientKey).trim() : '';
       const clientLogoUrl = role === 'client' ? normalizeClientLogoUrl(body.clientLogoUrl) : '';
       const clientPlatformImageUrl = role === 'client' ? normalizeClientPlatformImageUrl(body.clientPlatformImageUrl) : '';
@@ -233,6 +238,8 @@ exports.handler = async (event) => {
         projectPmAliases,
         qualityCompetencies,
         clientKey,
+        operationRegion,
+        siteKey,
         clientName,
         clientLogoUrl,
         clientPlatformImageUrl,
@@ -291,7 +298,10 @@ exports.handler = async (event) => {
     const alertSectors = role !== 'sector' ? [] : normalizeSectorList('', body.alertSectors);
     const projectPmAliases = isProjectsUser(role, sector, alertSectors) ? normalizeProjectPmAliases(body.projectPmAliases) : [];
     const qualityCompetencies = isQualityUser(role, sector, alertSectors) ? normalizeQualityCompetencies(body.qualityCompetencies) : [];
-    const clientKey = role === 'client' ? normalizeClientKey(body.clientKey || body.clientName || username) : '';
+    const operationRegion = normalizeOperationRegion(body.operationRegion || 'PT');
+      const siteKey = operationRegion;
+      const rawClientKey = body.clientKey || body.clientName || username;
+      const clientKey = role === 'client' ? normalizeClientKey(rawClientKey) : '';
     const clientName = role === 'client' ? String(body.clientName || clientKey).trim() : '';
     const clientLogoUrl = role === 'client' ? normalizeClientLogoUrl(body.clientLogoUrl) : '';
     const clientPlatformImageUrl = role === 'client' ? normalizeClientPlatformImageUrl(body.clientPlatformImageUrl) : '';
@@ -325,6 +335,8 @@ exports.handler = async (event) => {
       projectPmAliases,
       qualityCompetencies,
       clientKey,
+      operationRegion,
+      siteKey,
       clientName,
       clientLogoUrl,
       clientPlatformImageUrl,

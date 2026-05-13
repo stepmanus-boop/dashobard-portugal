@@ -7148,3 +7148,12 @@ body.client-mode .client-logo-box img,
 #admin-user-operation-region {
   min-height: 42px;
 }
+
+
+/* ===== v37.2 - Client Key ===== */
+.field-helper {
+  display: block;
+  margin-top: 4px;
+  opacity: .72;
+  font-size: .72rem;
+}

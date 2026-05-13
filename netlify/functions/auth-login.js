@@ -81,6 +81,8 @@ exports.handler = async (event) => {
         projectPmAliases: Array.isArray(user.projectPmAliases) ? user.projectPmAliases : [],
         qualityCompetencies: Array.isArray(user.qualityCompetencies) ? user.qualityCompetencies : [],
         clientKey: user.clientKey || '',
+        operationRegion: user.operationRegion || 'PT',
+        siteKey: user.siteKey || user.operationRegion || 'PT',
         clientName: user.clientName || '',
         clientLogoUrl: user.clientLogoUrl || '',
         clientPlatformImageUrl: user.clientPlatformImageUrl || '',
