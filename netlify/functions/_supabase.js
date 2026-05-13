@@ -219,10 +219,36 @@ async function listUsers() {
   return (Array.isArray(rows) ? rows : []).map(mapUser);
 }
 
-async function getUserByUsername(username) {
+function isUniversalAccessRow(row = {}) {
+  const role = String(row.role || '').trim().toLowerCase();
+  const sector = normalizeSectorValue(row.sector || '');
+  return role === 'admin' || sector === 'pcp';
+}
+
+async function getUserByUsername(username, options = {}) {
   const q = encodeURIComponent(String(username || '').trim());
-  const rows = await supabaseFetch(`/rest/v1/users?select=*&username=eq.${q}&limit=1`);
-  return mapUser(Array.isArray(rows) ? rows[0] : null);
+  const region = String(options.operationRegion || options.region || options.siteKey || '').trim().toUpperCase();
+
+  const allRows = await supabaseFetch(`/rest/v1/users?select=*&username=eq.${q}`);
+  const rows = Array.isArray(allRows) ? allRows : [];
+
+  // Admin e PCP são universais: podem acessar qualquer site/país.
+  const universal = rows.find((row) => isUniversalAccessRow(row) && row.active !== false);
+  if (universal) return mapUser(universal);
+
+  if (region) {
+    const regional = rows.find((row) => {
+      const rowRegion = String(row.operation_region || row.site_key || '').trim().toUpperCase()
+        || (String(row.client_key || '').trim().toUpperCase().endsWith('_BR') ? 'BR' : '')
+        || (String(row.client_key || '').trim().toUpperCase().endsWith('_PT') ? 'PT' : '')
+        || 'BR';
+      return rowRegion === region && row.active !== false;
+    });
+    if (regional) return mapUser(regional);
+    return null;
+  }
+
+  return mapUser(rows.find((row) => row.active !== false) || rows[0] || null);
 }
 
 async function getUserById(userId) {

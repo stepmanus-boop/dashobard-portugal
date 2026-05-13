@@ -65,6 +65,35 @@ function normalizeClientKey(input) {
   return value.toUpperCase().replace(/\s+/g, ' ');
 }
 
+function isUniversalAccessInput(role, sector, alertSectors = []) {
+  const normalizedRole = normalizeUserRole(role);
+  const normalizedSector = normalizeSectorValue(sector);
+  const alerts = normalizeSectorList('', alertSectors);
+  return normalizedRole === 'admin' || normalizedSector === 'pcp' || alerts.includes('pcp');
+}
+
+function inferUserOperationRegion(user = {}) {
+  const explicit = String(user.operationRegion || user.siteKey || '').trim().toUpperCase();
+  if (explicit) return normalizeOperationRegion(explicit);
+
+  // v37.7: cadastros antigos sem operation_region não devem bloquear o cadastro PT.
+  // Inferimos pelo clientKey quando existir.
+  const clientKey = String(user.clientKey || user.client_key || '').trim().toUpperCase();
+  if (clientKey.endsWith('_BR')) return 'BR';
+  if (clientKey.endsWith('_PT')) return 'PT';
+
+  // Legado sem região e sem sufixo: considera BR para não travar o novo site PT.
+  return 'BR';
+}
+
+function usersConflictByLogin(user, username, operationRegion, isUniversalAccess) {
+  if (normalizeText(user.username) !== normalizeText(username)) return false;
+  const userUniversal = isUniversalAccessInput(user.role, user.sector, user.alertSectors);
+  if (isUniversalAccess || userUniversal) return true;
+  return inferUserOperationRegion(user) === normalizeOperationRegion(operationRegion);
+}
+
+
 function normalizeClientLogoUrl(input) {
   return String(input || '').trim();
 }
@@ -223,9 +252,9 @@ exports.handler = async (event) => {
         return jsonResponse(400, { ok: false, error: 'Informe o cliente vinculado ao Portal do Cliente.' });
       }
 
-      const exists = users.some((user) => user.id !== userId && normalizeText(user.username) === normalizeText(username));
+      const exists = users.some((user) => user.id !== userId && usersConflictByLogin(user, username, operationRegion, isUniversalAccess));
       if (exists) {
-        return jsonResponse(409, { ok: false, error: 'Já existe um usuário com esse login.' });
+        return jsonResponse(409, { ok: false, error: 'Já existe um usuário universal ou um usuário com esse login neste país/ambiente.' });
       }
       if (current.id === admin.session.sub && role !== 'admin') {
         return jsonResponse(400, { ok: false, error: 'O admin atual não pode remover o próprio acesso.' });
@@ -240,8 +269,8 @@ exports.handler = async (event) => {
         projectPmAliases,
         qualityCompetencies,
         clientKey,
-        operationRegion,
-        siteKey,
+        operationRegion: finalOperationRegion,
+        siteKey: finalSiteKey,
         clientName,
         clientLogoUrl,
         clientPlatformImageUrl,
@@ -321,9 +350,9 @@ exports.handler = async (event) => {
     }
 
     const users = await listUsers();
-    const exists = users.some((user) => normalizeText(user.username) === normalizeText(username));
+    const exists = users.some((user) => usersConflictByLogin(user, username, operationRegion, isUniversalAccess));
     if (exists) {
-      return jsonResponse(409, { ok: false, error: 'Já existe um usuário com esse login.' });
+      return jsonResponse(409, { ok: false, error: 'Já existe um usuário universal ou um usuário com esse login neste país/ambiente.' });
     }
 
     const saved = await insertUser({
@@ -337,8 +366,8 @@ exports.handler = async (event) => {
       projectPmAliases,
       qualityCompetencies,
       clientKey,
-      operationRegion,
-      siteKey,
+      operationRegion: finalOperationRegion,
+      siteKey: finalSiteKey,
       clientName,
       clientLogoUrl,
       clientPlatformImageUrl,
