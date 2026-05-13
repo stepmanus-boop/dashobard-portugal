@@ -3524,7 +3524,10 @@ function isClientUser(user = state.user) {
 
 
 function getOperationRegion(user = state.user) {
-  return 'PT';
+  const raw = String(user?.operationRegion || user?.region || user?.environment || adminUserOperationRegionEl?.value || window.localStorage.getItem('step_operation_region') || 'PT').trim().toUpperCase();
+  if (['BR', 'BRASIL', 'BRAZIL'].includes(raw)) return 'BR';
+  if (['PT', 'PORTUGAL'].includes(raw)) return 'PT';
+  return raw || 'PT';
 }
 
 function buildProjectsApiUrl(params = {}) {
@@ -9756,7 +9759,7 @@ function resetAdminUserForm() {
   if (adminUserIdEl) adminUserIdEl.value = "";
   if (adminUserCancelEditEl) adminUserCancelEditEl.classList.add("hidden");
   if (adminUserSubmitLabelEl) adminUserSubmitLabelEl.textContent = "Criar usuário";
-  if (adminUserOperationRegionEl) adminUserOperationRegionEl.value = 'PT';
+  syncOperationRegionButtons('PT');
   setSelectedAdminAlertSectors([document.getElementById("admin-user-sector")?.value || "pintura"]);
   state.adminProjectPmSearchQuery = "";
   const projectPmSearchEl = document.getElementById("admin-user-project-pms-search");
@@ -9786,7 +9789,7 @@ function startEditUser(userId) {
   document.getElementById("admin-user-username").value = user.username || "";
   document.getElementById("admin-user-password").value = "";
   document.getElementById("admin-user-role").value = user.role === "admin" ? "admin" : (user.role === "client" ? "client" : "sector");
-  if (adminUserOperationRegionEl) adminUserOperationRegionEl.value = getOperationRegion(user);
+  syncOperationRegionButtons(getOperationRegion(user));
   document.getElementById("admin-user-sector").value = user.role === "client" ? "all" : (user.sector || "all");
   setSelectedAdminAlertSectors(Array.isArray(user.alertSectors) ? user.alertSectors : [user.sector]);
   state.adminProjectPmSearchQuery = "";
@@ -11155,8 +11158,8 @@ async function handleAdminUserSubmit(event) {
       username: String(document.getElementById("admin-user-username").value || "").trim(),
       password: String(document.getElementById("admin-user-password").value || "").trim(),
       role: document.getElementById("admin-user-role").value,
-      operationRegion: adminUserOperationRegionEl?.value || 'PT',
-      siteKey: adminUserOperationRegionEl?.value || 'PT',
+      operationRegion: getOperationRegion(),
+      siteKey: getOperationRegion(),
       sector: document.getElementById("admin-user-role").value === 'client' ? 'all' : document.getElementById("admin-user-sector").value,
       alertSectors: document.getElementById("admin-user-role").value === 'client' ? [] : getSelectedAdminAlertSectors(),
       projectPmAliases: adminUserFormHasProjectsScope() ? getAdminProjectPmAliases() : [],

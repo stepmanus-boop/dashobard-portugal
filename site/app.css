@@ -7157,3 +7157,28 @@ body.client-mode .client-logo-box img,
   opacity: .72;
   font-size: .72rem;
 }
+
+/* ===== v37.4 - Botões de país / ambiente operacional ===== */
+.country-button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.country-pill {
+  border: 1px solid rgba(126, 204, 255, .28);
+  background: rgba(9, 52, 86, .62);
+  color: #bfe9ff;
+  border-radius: 999px;
+  padding: 7px 12px;
+  min-height: 32px;
+  font-size: .78rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.country-pill:hover,
+.country-pill.is-active {
+  background: linear-gradient(135deg, rgba(30, 134, 200, .95), rgba(15, 90, 145, .95));
+  border-color: rgba(139, 224, 255, .8);
+  color: #ffffff;
+}

@@ -1,6 +1,8 @@
-function normalizeOperationRegion(value = 'BR') {
-  const normalized = String(value || 'BR').trim().toUpperCase();
-  return normalized === 'PT' || normalized === 'PORTUGAL' ? 'PT' : 'BR';
+function normalizeOperationRegion(value = 'PT') {
+  const normalized = String(value || 'PT').trim().toUpperCase();
+  if (['BR', 'BRASIL', 'BRAZIL'].includes(normalized)) return 'BR';
+  if (['PT', 'PORTUGAL'].includes(normalized)) return 'PT';
+  return normalized || 'PT';
 }
 
 const crypto = require('crypto');

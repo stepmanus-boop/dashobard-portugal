@@ -444,11 +444,17 @@
                 <option value="projetos">Projetos</option>
               </select>
             </label>
-            <label class="stack-field hidden">
-              <span>Ambiente operacional</span>
+            <label class="stack-field">
+              <span>País / Ambiente operacional</span>
               <select id="admin-user-operation-region">
+                <option value="BR">Brasil</option>
                 <option value="PT" selected>Portugal</option>
               </select>
+              <div class="country-button-row" data-operation-region-buttons>
+                <button type="button" class="country-pill" data-operation-region-option="BR">Brasil</button>
+                <button type="button" class="country-pill is-active" data-operation-region-option="PT">Portugal</button>
+              </div>
+              <small class="field-helper">Esse campo separa cadastros e dados por país. Para novos países, basta adicionar outra opção seguindo o mesmo padrão.</small>
             </label>
           </div>
           <label class="stack-field">
