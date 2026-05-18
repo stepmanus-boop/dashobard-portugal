@@ -1,14 +1,12 @@
 const { jsonResponse, createSessionCookie, normalizeText } = require('./_auth');
 
-function normalizeOperationRegion(value = process.env.OPERATION_REGION || process.env.SMARTSHEET_DEFAULT_REGION || 'PT') {
-  const normalized = String(value || 'PT').trim().toUpperCase();
-  if (['BR', 'BRASIL', 'BRAZIL'].includes(normalized)) return 'BR';
+function normalizeOperationRegion(value = 'PT') {
+  // Build Portugal: site separado do Brasil. Nunca autentica como BR.
   return 'PT';
 }
 
 function getLoginRegion(event, body = {}) {
-  const qs = event?.queryStringParameters || {};
-  return normalizeOperationRegion(body.operationRegion || body.region || body.siteKey || qs.region || qs.operationRegion || process.env.SITE_KEY || process.env.OPERATION_REGION || 'PT');
+  return 'PT';
 }
 
 const { getUserByUsername, isSupabaseConfigured, userPasswordMatches, upsertUserPresence } = require('./_supabase');

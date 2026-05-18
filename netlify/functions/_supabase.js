@@ -79,7 +79,6 @@ async function supabaseWriteWithClientPlatformFallback(path, options, payload, f
   }
 }
 
-
 function stripHiddenRegionSuffix(username = '') {
   return String(username || '').replace(/__(BR|PT)$/i, '');
 }
@@ -272,7 +271,7 @@ async function getUserByUsername(username, options = {}) {
         || (raw.toUpperCase().endsWith('__PT') ? 'PT' : '')
         || (String(row.client_key || '').trim().toUpperCase().endsWith('_BR') ? 'BR' : '')
         || (String(row.client_key || '').trim().toUpperCase().endsWith('_PT') ? 'PT' : '')
-        || 'BR';
+        || 'PT';
       return rowRegion === region && row.active !== false;
     });
     if (regional) return mapUser(regional);
@@ -638,6 +637,7 @@ async function updateStageUpdate(updateId, updates) {
 }
 
 
+
 function mapClientApiKey(row) {
   if (!row) return null;
   return {
@@ -649,7 +649,7 @@ function mapClientApiKey(row) {
     tokenPrefix: row.token_prefix || '',
     tokenLast4: row.token_last4 || '',
     name: row.name || 'API do cliente',
-    scopes: ['read:projects'],
+    scopes: Array.isArray(row.scopes) ? row.scopes.filter(Boolean) : ['read:projects'],
     allowedClients: Array.isArray(row.allowed_clients) ? row.allowed_clients.filter(Boolean) : [],
     active: row.active !== false,
     expiresAt: row.expires_at || null,
@@ -684,7 +684,7 @@ async function createClientApiKey(input = {}) {
     token_prefix: input.tokenPrefix || '',
     token_last4: input.tokenLast4 || '',
     name: input.name || 'API do cliente',
-    scopes: ['read:projects'],
+    scopes: Array.isArray(input.scopes) && input.scopes.length ? input.scopes : ['read:projects'],
     active: input.active !== false,
     expires_at: input.expiresAt || null,
     created_by: input.createdBy || input.username || '',
@@ -708,23 +708,6 @@ async function revokeClientApiKey(id, userId) {
     body: JSON.stringify({ active: false, revoked_at: new Date().toISOString() }),
   });
   return mapClientApiKey(Array.isArray(rows) ? rows[0] : null);
-}
-
-async function deleteRevokedClientApiKey(id, userId) {
-  const keyId = encodeURIComponent(String(id || '').trim());
-  const owner = encodeURIComponent(String(userId || '').trim());
-  if (!keyId || !owner) return null;
-  const existingRows = await supabaseFetch(`/rest/v1/client_api_keys?id=eq.${keyId}&user_id=eq.${owner}&select=*`);
-  const existing = mapClientApiKey(Array.isArray(existingRows) ? existingRows[0] : null);
-  if (!existing) return null;
-  if (existing.active !== false) {
-    throw new Error('Só é possível excluir uma chave depois de revogar.');
-  }
-  await supabaseFetch(`/rest/v1/client_api_keys?id=eq.${keyId}&user_id=eq.${owner}`, {
-    method: 'DELETE',
-    headers: getSupabaseHeaders('return=minimal'),
-  });
-  return existing;
 }
 
 async function findClientApiKeyByHash(tokenHash) {
@@ -755,6 +738,110 @@ async function markClientApiKeyUsed(id) {
   }
 }
 
+
+function mapClientBspOverride(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    region: row.region || '',
+    projectRowId: String(row.project_row_id || ''),
+    projectNumber: row.project_number || '',
+    projectDisplay: row.project_display || '',
+    clientKey: row.client_key || '',
+    clientName: row.client_name || '',
+    vessel: row.vessel || '',
+    pm: row.pm || '',
+    fabricationStartOverride: row.fabrication_start_override || '',
+    boilermakerFinishOverride: row.boilermaker_finish_override || '',
+    weldingFinishOverride: row.welding_finish_override || '',
+    inspectionFinishOverride: row.inspection_finish_override || '',
+    thFinishOverride: row.th_finish_override || '',
+    coatingFinishOverride: row.coating_finish_override || '',
+    projectFinishOverride: row.project_finish_override || '',
+    executiveStatus: row.executive_status || '',
+    executiveNote: row.executive_note || '',
+    delayReason: row.delay_reason || '',
+    customFields: row.custom_fields && typeof row.custom_fields === 'object' ? row.custom_fields : {},
+    visibleToClient: row.visible_to_client !== false,
+    createdBy: row.created_by || '',
+    createdByName: row.created_by_name || '',
+    createdAt: row.created_at || null,
+    updatedBy: row.updated_by || '',
+    updatedByName: row.updated_by_name || '',
+    updatedAt: row.updated_at || null,
+  };
+}
+
+async function listClientBspOverrides() {
+  try {
+    const rows = await supabaseFetch('/rest/v1/client_bsp_overrides?select=*&order=updated_at.desc');
+    return (Array.isArray(rows) ? rows : [])
+      .map(mapClientBspOverride)
+      .filter(Boolean)
+      .filter((item) => {
+        const region = String(item.region || '').trim().toUpperCase();
+        return !region || region === 'PT';
+      });
+  } catch (error) {
+    if (String(error.message || '').includes('client_bsp_overrides')) return [];
+    throw error;
+  }
+}
+
+function normalizeDateForSupabase(value) {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+async function upsertClientBspOverride(input = {}) {
+  const now = new Date().toISOString();
+  const payload = {
+    region: 'PT',
+    project_row_id: String(input.projectRowId || '').trim(),
+    project_number: input.projectNumber || '',
+    project_display: input.projectDisplay || '',
+    client_key: input.clientKey || '',
+    client_name: input.clientName || '',
+    vessel: input.vessel || '',
+    pm: input.pm || '',
+    fabrication_start_override: normalizeDateForSupabase(input.fabricationStartOverride),
+    boilermaker_finish_override: normalizeDateForSupabase(input.boilermakerFinishOverride),
+    welding_finish_override: normalizeDateForSupabase(input.weldingFinishOverride),
+    inspection_finish_override: normalizeDateForSupabase(input.inspectionFinishOverride),
+    th_finish_override: normalizeDateForSupabase(input.thFinishOverride),
+    coating_finish_override: normalizeDateForSupabase(input.coatingFinishOverride),
+    project_finish_override: normalizeDateForSupabase(input.projectFinishOverride),
+    executive_status: input.executiveStatus || '',
+    executive_note: input.executiveNote || '',
+    delay_reason: input.delayReason || '',
+    custom_fields: input.customFields && typeof input.customFields === 'object' ? input.customFields : {},
+    visible_to_client: input.visibleToClient !== false,
+    updated_by: input.updatedBy || '',
+    updated_by_name: input.updatedByName || '',
+    updated_at: now,
+  };
+  if (!payload.project_row_id) throw new Error('BSP sem identificador de linha.');
+  if (input.createdBy) payload.created_by = input.createdBy;
+  if (input.createdByName) payload.created_by_name = input.createdByName;
+  const rows = await supabaseFetch('/rest/v1/client_bsp_overrides?on_conflict=project_row_id&select=*', {
+    method: 'POST',
+    headers: getSupabaseHeaders('resolution=merge-duplicates,return=representation'),
+    body: JSON.stringify(payload),
+  });
+  return mapClientBspOverride(Array.isArray(rows) ? rows[0] : null);
+}
+
+async function deleteClientBspOverride(id) {
+  const q = encodeURIComponent(String(id || '').trim());
+  if (!q) return true;
+  await supabaseFetch(`/rest/v1/client_bsp_overrides?id=eq.${q}`, {
+    method: 'DELETE',
+    headers: getSupabaseHeaders(),
+  });
+  return true;
+}
+
+
 module.exports = {
   SUPABASE_URL,
   SUPABASE_ANON_KEY,
@@ -783,10 +870,13 @@ module.exports = {
   mapStageUpdate,
   mapPresence,
   mapClientApiKey,
+  mapClientBspOverride,
+  listClientBspOverrides,
+  upsertClientBspOverride,
+  deleteClientBspOverride,
   listClientApiKeysForUser,
   createClientApiKey,
   revokeClientApiKey,
-  deleteRevokedClientApiKey,
   findClientApiKeyByHash,
   markClientApiKeyUsed,
   hashPassword,

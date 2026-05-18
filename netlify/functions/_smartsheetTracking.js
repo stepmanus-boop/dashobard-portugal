@@ -1,6 +1,7 @@
 const API_BASE = process.env.SMARTSHEET_API_BASE || 'https://api.smartsheet.com/2.0';
-const SHEET_NAME = process.env.SMARTSHEET_SHEET_NAME || 'Progress Tracking Sheet - Piping Fabrication';
-const SHEET_ID_ENV = process.env.SMARTSHEET_SHEET_ID || '';
+// Build Portugal: valida apontamentos diretamente no Tracking PT.
+const SHEET_NAME = process.env.SMARTSHEET_SHEET_NAME_PT || process.env.SMARTSHEET_SHEET_NAME || 'Progress Tracking Sheet - Piping Fabrication PT';
+const SHEET_ID_ENV = process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID || '';
 const TOKEN = process.env.SMARTSHEET_TOKEN || process.env.SMARTSHEET_ACCESS_TOKEN || process.env.SMARTSHEET_API_TOKEN || process.env.SMARTSHEET_BEARER_TOKEN || process.env.SMARTSHEET_PAT || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN || '5pP36OjBaD1W2HWyxf6aoGxXasPvEl8gbqOmQ';
 const TRACKING_SHEET_CACHE_MS = Number(process.env.TRACKING_SHEET_CACHE_MS || 2 * 60 * 1000);
 const SMARTSHEET_REQUEST_TIMEOUT_MS = Number(process.env.SMARTSHEET_REQUEST_TIMEOUT_MS || 15000);
