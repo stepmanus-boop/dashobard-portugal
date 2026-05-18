@@ -1,8 +1,7 @@
-const CACHE_NAME = "step-gerencia-pwa-v38-7-portugal-atualizado-v36-55";
+const CACHE_NAME = "step-gerencia-pwa-v38-6-portugal-api";
 // Versão v28: preserva cache local entre logouts e usa caminho rápido pós-login
 // - Mantém assets do app shell versionados para liberar app.js corrigido imediatamente
-// - API continua sem cache no Service Worker; dados operacionais usam cache local validado pelo app
-// - v38.7: incorpora correções do painel Brasil v36.44-v36.55 no painel Portugal
+// - API continua sem cache no Service Worker; dados operacionais usam cache local do app
 // - Interceptação de /api restrita à própria origem para evitar efeitos colaterais
 const APP_SHELL = [
   "/",

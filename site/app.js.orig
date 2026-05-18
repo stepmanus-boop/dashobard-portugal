@@ -2046,18 +2046,16 @@ function getStageTrackingInfo(item) {
   const current = Number(item?.trackingProgress);
   const hasCurrent = Number.isFinite(current);
   const matched = Boolean(item?.trackingMatched) || (hasCurrent && current >= progress);
-  const status = String(item?.trackingStatus || '').trim().toLowerCase();
-  const checking = !hasCurrent && ['checking', 'timeout', 'pending_check'].includes(status);
 
   return {
     current: hasCurrent ? current : null,
     matched,
     label: hasCurrent
       ? (matched ? `Tracking OK ${formatPercent(current)}` : `Aguardando tracking ${formatPercent(current)}/${formatPercent(progress)}`)
-      : (checking ? 'Validando Tracking...' : 'Conferir Tracking'),
+      : 'Tracking não localizado',
     className: hasCurrent
       ? (matched ? 'stage-badge--tracking-ok' : 'stage-badge--tracking-waiting')
-      : (checking ? 'stage-badge--tracking-waiting' : 'stage-badge--tracking-missing'),
+      : 'stage-badge--tracking-missing',
   };
 }
 
@@ -3995,182 +3993,13 @@ function compareClientSpoolsByPriority(a, b) {
   return String(a?.iso || '').localeCompare(String(b?.iso || ''), 'pt-BR', { numeric: true, sensitivity: 'base' });
 }
 
-function getClientSpoolPanelKey(spool, index = 0) {
-  const candidates = [spool?.iso, spool?.drawing, spool?.description, spool?.lineNumber, spool?.primary]
-    .map((value) => String(value || '').trim())
-    .filter(Boolean);
-  const raw = candidates.join('|') || `spool-${index}`;
-  return normalizeCompactText(raw) || `spool-${index}`;
-}
-
-function findClientSpoolByPanelKey(project, key) {
-  const wanted = String(key || '').trim();
-  const spools = Array.isArray(project?.spools) ? project.spools : [];
-  if (!wanted || !spools.length) return null;
-  return spools.find((spool, index) => getClientSpoolPanelKey(spool, index) === wanted) || null;
-}
-
-function formatClientStandalonePanelValue(value) {
-  if (value == null || value === '') return '—';
-  return String(value);
-}
-
-function formatClientStandalonePanelPercent(value) {
-  if (value == null || value === '') return '—';
-  if (String(value).trim().toUpperCase() === 'N/A') return 'N/A';
-  return String(value).includes('%') ? String(value) : formatPercent(clientPercentValue(value));
-}
-
-function getClientStandaloneStageRows(project, spool = null) {
-  const projectStageValues = project?.stageValues && typeof project.stageValues === 'object' ? project.stageValues : {};
-  const spoolStageValues = spool?.stageValues && typeof spool.stageValues === 'object' ? spool.stageValues : {};
-  const source = Object.keys(spoolStageValues).length ? spoolStageValues : projectStageValues;
-  const keys = getClientDetailStageKeys(project);
-  return keys.map((key) => {
-    const label = (state.meta?.stageOrder || []).find((stage) => stage.key === key)?.label || key;
-    return { label, value: source[key] };
-  });
-}
-
-function buildClientStandalonePanelHtml(project, spool = null) {
-  const isSpool = Boolean(spool);
-  const status = getProjectStatusPresentation(project);
-  const visualState = isSpool ? getClientSpoolVisualState(spool) : getClientProjectVisualState(project);
-  const title = isSpool ? (spool.iso || spool.drawing || 'Tag / ISO') : getClientProjectDisplayCode(project);
-  const subtitle = isSpool ? `${getClientProjectDisplayCode(project)} • ${getProjectVesselLabel(project)}` : `${getProjectClientLabel(project)} • ${getProjectVesselLabel(project)}`;
-  const progress = isSpool ? getClientSpoolProgress(spool) : getClientOverallProgress(project);
-  const stageRows = getClientStandaloneStageRows(project, spool);
-  const po = getClientTrackingReportPo(project) || '—';
-  const description = isSpool ? (spool.description || spool.drawing || '—') : (project.summaryDrawing || project.projectDisplay || '—');
-  const observation = isSpool
-    ? (spool.observations || spool.OBSERVATIONS || spool.observation || spool.note || spool.notes || '—')
-    : getProjectObservationContexts(project).map((item) => `${item.source}: ${item.text}`).join(' | ') || '—';
-  const currentStatus = isSpool ? (spool.currentStatus || spool.stage || uiStateLabel(spool.uiState)) : status.text;
-  const currentStage = isSpool ? (spool.currentSector || spool.operationalSector || spool.flow?.sector || '—') : getProjectCurrentStageDisplay(project);
-  const kilos = isSpool ? Number(spool.kilos || 0) : Number(project.kilos || 0);
-  const m2 = isSpool ? Number(spool.m2Painting || 0) : Number(project.m2Painting || 0);
-  const finishedDate = isSpool
-    ? (spool.plannedFinishDate || spool.finishDate || spool.deliveryDate || project.plannedFinishDate)
-    : (project.plannedFinishDate || getClientAnalyticFinishDate(project));
-  const spools = Array.isArray(project?.spools) ? project.spools : [];
-  const siblingRows = !isSpool ? spools.slice().sort(compareClientSpoolsByPriority).map((item, index) => {
-    const itemState = getClientSpoolVisualState(item);
-    return `<tr><td>${escapeHtml(item.iso || item.drawing || `Tag ${index + 1}`)}</td><td>${escapeHtml(item.description || '—')}</td><td><span class="chip chip-${itemState}">${escapeHtml(item.currentStatus || item.stage || uiStateLabel(item.uiState))}</span></td><td>${formatPercent(getClientSpoolProgress(item))}</td><td>${formatNumber(item.kilos || 0, 2)} kg</td></tr>`;
-  }).join('') : '';
-
-  return `<!doctype html>
-<html lang="pt-BR">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)} • Painel Individual STEP</title>
-<style>
-  :root { color-scheme: light; font-family: Inter, Segoe UI, Arial, sans-serif; --blue:#083a63; --teal:#008a75; --soft:#eef8fb; --line:#c9dde8; --text:#12324a; }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: linear-gradient(135deg, #f8fcff 0%, #eef8fb 100%); color: var(--text); }
-  .page { max-width: 1280px; margin: 0 auto; padding: 28px; }
-  .hero { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: center; background: #fff; border: 1px solid var(--line); border-radius: 24px; padding: 24px; box-shadow: 0 18px 44px rgba(8,58,99,.11); }
-  .kicker { margin: 0 0 8px; color: var(--teal); font-weight: 900; letter-spacing: .14em; text-transform: uppercase; font-size: 12px; }
-  h1 { margin: 0; font-size: clamp(26px, 4vw, 46px); color: var(--blue); line-height: 1.05; }
-  .subtitle { margin: 10px 0 0; color: #49677b; font-weight: 700; }
-  .logo { height: 54px; max-width: 130px; object-fit: contain; }
-  .toolbar { display:flex; gap:10px; justify-content:flex-end; margin-top:14px; }
-  button { border:0; border-radius:999px; padding:11px 16px; font-weight:900; cursor:pointer; background:var(--blue); color:#fff; }
-  button.secondary { background:#e8f3f7; color:var(--blue); }
-  .grid { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:14px; margin-top:18px; }
-  .card { background:#fff; border:1px solid var(--line); border-radius:20px; padding:16px; box-shadow:0 12px 30px rgba(8,58,99,.08); min-width:0; }
-  .card span { display:block; color:#638094; font-size:11px; font-weight:900; letter-spacing:.10em; text-transform:uppercase; margin-bottom:6px; }
-  .card strong { display:block; font-size:20px; color:var(--blue); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .progress-wrap { display:grid; grid-template-columns: 180px 1fr; gap:18px; align-items:center; margin-top:18px; }
-  .gauge { width:160px; aspect-ratio:1; border-radius:50%; background:conic-gradient(var(--teal) ${clampClientPercent(progress)}%, #dce7ee 0); display:grid; place-items:center; position:relative; margin:auto; }
-  .gauge:after { content:""; position:absolute; inset:18px; border-radius:50%; background:#fff; }
-  .gauge strong { position:relative; z-index:1; color:var(--blue); font-size:28px; }
-  .section { margin-top:18px; background:#fff; border:1px solid var(--line); border-radius:22px; padding:18px; box-shadow:0 12px 30px rgba(8,58,99,.08); }
-  .section h2 { margin:0 0 14px; color:var(--blue); font-size:20px; }
-  table { width:100%; border-collapse:separate; border-spacing:0; overflow:hidden; border-radius:14px; border:1px solid var(--line); }
-  th, td { padding:12px 14px; text-align:left; border-bottom:1px solid #e2edf2; vertical-align:top; }
-  th { background:var(--soft); color:var(--blue); font-size:12px; letter-spacing:.08em; text-transform:uppercase; }
-  tr:last-child td { border-bottom:0; }
-  .chip { display:inline-flex; border-radius:999px; padding:6px 10px; font-weight:900; font-size:12px; background:#e8f3f7; color:var(--blue); }
-  .chip-completed { background:#dcfce7; color:#166534; }
-  .chip-in-progress { background:#fef3c7; color:#92400e; }
-  .chip-not-started { background:#e2e8f0; color:#475569; }
-  .note { color:#49677b; line-height:1.5; white-space:pre-wrap; }
-  @media (max-width: 850px) { .hero, .progress-wrap { grid-template-columns:1fr; } .grid { grid-template-columns:1fr 1fr; } .page { padding:14px; } }
-  @media print { .toolbar { display:none; } body { background:#fff; } .page { max-width:none; } }
-</style>
-</head>
-<body>
-  <main class="page">
-    <section class="hero">
-      <div>
-        <p class="kicker">${isSpool ? 'Painel Individual da Tag / ISO' : 'Painel Individual da Obra'}</p>
-        <h1>${escapeHtml(title)}</h1>
-        <p class="subtitle">${escapeHtml(subtitle)}</p>
-      </div>
-      <div>
-        <img class="logo" src="${escapeHtml(new URL('./assets/step-logo.png', window.location.href).href)}" alt="STEP">
-        <div class="toolbar"><button onclick="window.print()">Imprimir / PDF</button><button class="secondary" onclick="window.close()">Fechar</button></div>
-      </div>
-    </section>
-
-    <section class="progress-wrap">
-      <div class="gauge"><strong>${formatPercent(progress)}</strong></div>
-      <div class="grid">
-        <article class="card"><span>BSP</span><strong>${escapeHtml(getClientProjectDisplayCode(project))}</strong></article>
-        <article class="card"><span>PO</span><strong>${escapeHtml(po)}</strong></article>
-        <article class="card"><span>Cliente</span><strong>${escapeHtml(getProjectClientLabel(project))}</strong></article>
-        <article class="card"><span>Unidade</span><strong>${escapeHtml(getProjectVesselLabel(project))}</strong></article>
-        <article class="card"><span>Status</span><strong>${escapeHtml(currentStatus || '—')}</strong></article>
-        <article class="card"><span>Etapa</span><strong>${escapeHtml(currentStage || '—')}</strong></article>
-        <article class="card"><span>Peso</span><strong>${formatNumber(kilos, 2)} kg</strong></article>
-        <article class="card"><span>M²</span><strong>${formatNumber(m2, 3)}</strong></article>
-        <article class="card"><span>Descrição</span><strong>${escapeHtml(description)}</strong></article>
-        <article class="card"><span>Término</span><strong>${escapeHtml(clientFormatDateValue(finishedDate) || '—')}</strong></article>
-      </div>
-    </section>
-
-    <section class="section">
-      <h2>Evolução por etapa</h2>
-      <table><thead><tr><th>Etapa</th><th>Avanço</th></tr></thead><tbody>
-        ${stageRows.map((row) => `<tr><td>${escapeHtml(row.label)}</td><td><span class="chip">${escapeHtml(formatClientStandalonePanelPercent(row.value))}</span></td></tr>`).join('')}
-      </tbody></table>
-    </section>
-
-    <section class="section">
-      <h2>Observações</h2>
-      <div class="note">${escapeHtml(formatClientStandalonePanelValue(observation))}</div>
-    </section>
-
-    ${!isSpool ? `<section class="section"><h2>Tags / ISOs da obra</h2><table><thead><tr><th>Tag/ISO</th><th>Descrição</th><th>Status</th><th>%</th><th>Peso</th></tr></thead><tbody>${siblingRows || '<tr><td colspan="5">Nenhuma tag detalhada encontrada.</td></tr>'}</tbody></table></section>` : ''}
-  </main>
-</body>
-</html>`;
-}
-
-function openClientSpoolIndividualPanel(project, spool = null) {
-  if (!project) return;
-  const newWindow = window.open('', '_blank');
-  if (!newWindow) {
-    window.alert('O navegador bloqueou a nova aba. Libere pop-ups para abrir o painel individual.');
-    return;
-  }
-  try { newWindow.opener = null; } catch (_) {}
-  const html = buildClientStandalonePanelHtml(project, spool);
-  newWindow.document.open();
-  newWindow.document.write(html);
-  newWindow.document.close();
-}
-
-function renderClientSpoolRows(spools, limit = 120, project = null) {
+function renderClientSpoolRows(spools, limit = 120) {
   const items = (Array.isArray(spools) ? [...spools] : []).sort(compareClientSpoolsByPriority).slice(0, limit);
   if (!items.length) return '<tr><td colspan="6" class="loading-cell">Nenhuma tag detalhada encontrada para esta BSP.</td></tr>';
-  const projectId = project?.rowId || state.clientBspOverrides.activeExecutiveProjectId || state.clientPortal.selectedProjectId || '';
-  return items.map((spool, index) => {
-    const visualState = getClientSpoolVisualState(spool);
+  return items.map((spool) => {
+    const state = getClientSpoolVisualState(spool);
     const statusText = spool?.currentStatus || spool?.stage || uiStateLabel(spool?.uiState);
-    const key = getClientSpoolPanelKey(spool, index);
-    return `<tr class="client-spool-row client-spool-row--${visualState} client-spool-row--clickable" data-client-spool-panel="${escapeHtml(key)}" data-client-spool-project-id="${escapeHtml(projectId)}" title="Clique para abrir o painel individual em uma nova aba"><td><strong>${escapeHtml(spool.iso || '—')}</strong></td><td>${escapeHtml(spool.description || '—')}</td><td><span class="client-spool-chip client-spool-chip--${visualState}">${escapeHtml(statusText)}</span></td><td>${escapeHtml(spool.currentSector || spool.operationalSector || '—')}</td><td><span class="client-spool-progress client-spool-progress--${visualState}">${formatPercent(spool.overallProgress)}</span></td><td>${formatNumber(spool.kilos, 2)} kg</td></tr>`;
+    return `<tr class="client-spool-row client-spool-row--${state}"><td><strong>${escapeHtml(spool.iso || '—')}</strong></td><td>${escapeHtml(spool.description || '—')}</td><td><span class="client-spool-chip client-spool-chip--${state}">${escapeHtml(statusText)}</span></td><td>${escapeHtml(spool.currentSector || spool.operationalSector || '—')}</td><td><span class="client-spool-progress client-spool-progress--${state}">${formatPercent(spool.overallProgress)}</span></td><td>${formatNumber(spool.kilos, 2)} kg</td></tr>`;
   }).join('');
 }
 
@@ -4208,7 +4037,7 @@ function renderClientProjectDetail(project) {
     </div>
     <div class="client-table-wrap client-table-wrap--compact">
       <table class="client-bsp-table"><thead><tr><th>Tag/ISO</th><th>Descrição</th><th>Status</th><th>Etapa</th><th>%</th><th>Peso</th></tr></thead><tbody>
-        ${renderClientSpoolRows(spools, 80, project)}
+        ${renderClientSpoolRows(spools, 80)}
       </tbody></table>
     </div>
   `;
@@ -4754,65 +4583,6 @@ function renderClientExecutiveSchedule(project) {
   `;
 }
 
-
-function formatClientTrackingReportScreenCell(value, column = {}) {
-  if (value == null || value === '') return '—';
-  const rawText = String(value).trim();
-  if (!rawText) return '—';
-  if (column.type === 'percent' || column.type === 'percent-or-text') {
-    if (rawText.toUpperCase() === 'N/A') return 'N/A';
-    const number = Number(value);
-    if (!Number.isFinite(number)) return escapeHtml(rawText);
-    return formatPercent(number * 100);
-  }
-  if (column.type === 'number') {
-    const number = Number(value);
-    if (!Number.isFinite(number)) return escapeHtml(rawText);
-    const fraction = /kilos/i.test(column.label || '') ? 0 : 0;
-    return formatNumber(number, fraction);
-  }
-  return escapeHtml(rawText);
-}
-
-function renderClientTrackingReportPreview(project) {
-  const rows = buildClientTrackingReportRows(project);
-  if (!rows.length) return '<section class="client-exec-card client-exec-report-preview"><div class="client-empty-state">Report não disponível para esta BSP.</div></section>';
-  const summary = rows[0] || {};
-  const columns = CLIENT_TRACKING_REPORT_COLUMNS;
-  const po = summary['Client PO Number'] || getClientTrackingReportPo(project) || '—';
-  const progress = formatClientTrackingReportScreenCell(summary['% Individual Progress'], { type: 'percent' });
-  const spoolCount = summary['Quantity Spools'] || getProjectItemCount(project) || 0;
-  const kilos = summary['Kilos'] || project?.kilos || 0;
-  return `
-    <section class="client-exec-card client-exec-report-preview">
-      <div class="client-exec-card-head client-exec-card-head--report">
-        <div>
-          <h3>Report do Cliente</h3>
-          <span>Dados do Tracking + Work in Progress exibidos dentro da visão principal</span>
-        </div>
-        <button class="client-exec-pdf-button client-exec-report-button" type="button" data-client-download-report="${escapeHtml(project?.rowId || '')}">Baixar Excel do Cronograma</button>
-      </div>
-      <div class="client-report-summary-strip">
-        <article><span>Project</span><strong>${escapeHtml(getClientTrackingReportProjectText(project))}</strong></article>
-        <article><span>Client PO Number</span><strong>${escapeHtml(po)}</strong></article>
-        <article><span>PM</span><strong>${escapeHtml(summary.PM || project?.pm || '—')}</strong></article>
-        <article><span>Project Type</span><strong>${escapeHtml(summary['Project Type'] || getProjectTypeLabel(project) || '—')}</strong></article>
-        <article><span>Quantity Spools</span><strong>${formatNumber(spoolCount, 0)}</strong></article>
-        <article><span>Kilos</span><strong>${formatNumber(kilos, 0)}</strong></article>
-        <article><span>% Individual Progress</span><strong>${escapeHtml(progress)}</strong></article>
-      </div>
-      <div class="client-table-wrap client-report-table-wrap">
-        <table class="client-bsp-table client-tracking-report-table">
-          <thead><tr>${columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('')}</tr></thead>
-          <tbody>
-            ${rows.map((row) => `<tr class="${row._summary ? 'client-report-summary-row' : ''}">${columns.map((column) => `<td>${formatClientTrackingReportScreenCell(row[column.label], column)}</td>`).join('')}</tr>`).join('')}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  `;
-}
-
 function getClientStageTimeline(project) {
   const stages = getClientProductionStages(project);
   return stages.map((stage) => ({
@@ -4836,24 +4606,6 @@ function ensureClientBspExecutiveModalEl() {
   `;
   document.body.appendChild(modal);
   modal.addEventListener('click', (event) => {
-    const spoolPanelRow = event.target.closest('[data-client-spool-panel]');
-    if (spoolPanelRow) {
-      event.preventDefault();
-      event.stopPropagation();
-      const projectId = spoolPanelRow.dataset.clientSpoolProjectId || state.clientBspOverrides.activeExecutiveProjectId;
-      const project = state.projects.find((item) => String(item.rowId) === String(projectId));
-      const spool = findClientSpoolByPanelKey(project, spoolPanelRow.dataset.clientSpoolPanel || '');
-      if (project && spool) openClientSpoolIndividualPanel(project, spool);
-      return;
-    }
-    const projectPanelRow = event.target.closest('[data-client-project-panel]');
-    if (projectPanelRow) {
-      event.preventDefault();
-      event.stopPropagation();
-      const project = state.projects.find((item) => String(item.rowId) === String(projectPanelRow.dataset.clientProjectPanel));
-      if (project) openClientSpoolIndividualPanel(project, null);
-      return;
-    }
     const pdfButton = event.target.closest('[data-client-download-pdf]');
     if (pdfButton) {
       event.preventDefault();
@@ -5046,7 +4798,7 @@ function renderClientMacroProjectRows(projects = state.projects) {
   return list.map((project) => {
     const status = getProjectStatusPresentation(project);
     const visualState = getClientProjectVisualState(project);
-    return `<tr class="client-spool-row client-spool-row--${visualState} client-spool-row--clickable" data-client-project-panel="${escapeHtml(project.rowId || '')}" title="Clique para abrir o painel individual da obra em uma nova aba"><td><strong>${escapeHtml(getClientProjectDisplayCode(project))}</strong></td><td>${escapeHtml(getProjectVesselLabel(project) || '—')}</td><td>${formatNumber(getProjectItemCount(project))}</td><td>${formatNumber(project.kilos, 0)} kg</td><td>${formatNumber(project.weldedWeightKg, 0)} kg</td><td><span class="client-spool-chip client-spool-chip--${visualState}">${escapeHtml(status.text)}</span></td><td><span class="client-spool-progress client-spool-progress--${visualState}">${formatPercent(getClientOverallProgress(project))}</span></td><td>${escapeHtml(project.plannedFinishDate || '—')}</td></tr>`;
+    return `<tr class="client-spool-row client-spool-row--${visualState}"><td><strong>${escapeHtml(getClientProjectDisplayCode(project))}</strong></td><td>${escapeHtml(getProjectVesselLabel(project) || '—')}</td><td>${formatNumber(getProjectItemCount(project))}</td><td>${formatNumber(project.kilos, 0)} kg</td><td>${formatNumber(project.weldedWeightKg, 0)} kg</td><td><span class="client-spool-chip client-spool-chip--${visualState}">${escapeHtml(status.text)}</span></td><td><span class="client-spool-progress client-spool-progress--${visualState}">${formatPercent(getClientOverallProgress(project))}</span></td><td>${escapeHtml(project.plannedFinishDate || '—')}</td></tr>`;
   }).join('');
 }
 
@@ -5720,8 +5472,6 @@ function openClientBspExecutive(project) {
       ${renderClientExecutiveSchedule(project)}
     </section>
 
-    ${renderClientTrackingReportPreview(project)}
-
     <section class="client-exec-card client-exec-attention">
       <div class="client-exec-card-head"><h3>S-Curve | Attention Points</h3><span>Análise automática</span></div>
       <ul>${attention.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
@@ -5738,7 +5488,7 @@ function openClientBspExecutive(project) {
       </div>
       <div class="client-table-wrap client-table-wrap--compact client-exec-process-table">
         <table class="client-bsp-table"><thead><tr><th>Tag/ISO</th><th>Descrição</th><th>Status</th><th>Etapa</th><th>%</th><th>Peso</th></tr></thead><tbody>
-          ${renderClientSpoolRows(spools, 120, project)}
+          ${renderClientSpoolRows(spools, 120)}
         </tbody></table>
       </div>
     </section>
@@ -6086,24 +5836,6 @@ function handleClientApiModalClick(event) {
 }
 
 function handleClientDashboardClick(event) {
-  const spoolPanelRow = event.target.closest('[data-client-spool-panel]');
-  if (spoolPanelRow) {
-    event.preventDefault();
-    event.stopPropagation();
-    const projectId = spoolPanelRow.dataset.clientSpoolProjectId || state.clientPortal.selectedProjectId;
-    const project = state.projects.find((item) => String(item.rowId) === String(projectId));
-    const spool = findClientSpoolByPanelKey(project, spoolPanelRow.dataset.clientSpoolPanel || '');
-    if (project && spool) openClientSpoolIndividualPanel(project, spool);
-    return;
-  }
-  const reportButton = event.target.closest('[data-client-download-report]');
-  if (reportButton) {
-    event.preventDefault();
-    event.stopPropagation();
-    const project = state.projects.find((item) => String(item.rowId) === String(reportButton.dataset.clientDownloadReport));
-    downloadClientTrackingReport(project);
-    return;
-  }
   const apiButton = event.target.closest('[data-client-open-api]');
   if (apiButton) {
     openClientApiModal();
@@ -6162,11 +5894,6 @@ function handleClientDashboardClick(event) {
 }
 
 function handleClientDashboardDblClick(event) {
-  if (event.target.closest('[data-client-download-report]')) {
-    event.preventDefault();
-    event.stopPropagation();
-    return;
-  }
   const vesselButton = event.target.closest('[data-client-vessel]');
   if (vesselButton && isClientUser()) {
     event.preventDefault();
@@ -7099,578 +6826,6 @@ function excelCell(value, type = 'String') {
   return `<Cell><Data ss:Type="String">${excelXmlEscape(value == null || value === '' ? '—' : value)}</Data></Cell>`;
 }
 
-const CLIENT_TRACKING_REPORT_COLUMNS = [
-  { label: 'Primary', width: 118 },
-  { label: 'Project', width: 135 },
-  { label: 'Client', width: 115 },
-  { label: 'Vessel', width: 115 },
-  { label: 'Client PO Number', width: 145 },
-  { label: 'Priority', width: 70, type: 'number' },
-  { label: 'Project Type', width: 110 },
-  { label: 'PM', width: 150 },
-  { label: 'Drawing', width: 230 },
-  { label: 'Line Nº', width: 180 },
-  { label: 'Size', width: 80 },
-  { label: 'Quantity Spools', width: 105, type: 'number' },
-  { label: 'Kilos', width: 95, type: 'number' },
-  { label: 'Drawing Execution Advance%', width: 135, type: 'percent' },
-  { label: 'Spool Assemble and tack weld', width: 150, type: 'percent' },
-  { label: 'Full welding execution', width: 135, type: 'percent' },
-  { label: 'Non Destructive Examination (QC)', width: 165, type: 'percent' },
-  { label: 'Final Dimensional Inpection/3D (QC)', width: 185, type: 'percent' },
-  { label: 'Hydro Test Pressure (QC)', width: 150, type: 'percent' },
-  { label: 'HDG / FBE.  (PAINT)', width: 135, type: 'percent-or-text' },
-  { label: 'Surface preparation and/or coating', width: 180, type: 'percent' },
-  { label: 'Final Inspection', width: 120, type: 'percent' },
-  { label: 'Package and Delivered', width: 140, type: 'percent' },
-  { label: '% Individual Progress', width: 130, type: 'percent' },
-];
-
-const CLIENT_TRACKING_REPORT_STAGE_KEYS = {
-  'Drawing Execution Advance%': 'Drawing Execution Advance%',
-  'Spool Assemble and tack weld': 'Spool Assemble and tack weld',
-  'Full welding execution': 'Full welding execution',
-  'Non Destructive Examination (QC)': 'Non Destructive Examination (QC)',
-  'Final Dimensional Inpection/3D (QC)': 'Final Dimensional Inpection/3D (QC)',
-  'Hydro Test Pressure (QC)': 'Hydro Test Pressure (QC)',
-  'HDG / FBE.  (PAINT)': 'HDG / FBE.  (PAINT)',
-  'Surface preparation and/or coating': 'Surface preparation and/or coating',
-  'Final Inspection': 'Final Inspection',
-  'Package and Delivered': 'Package and Delivered',
-};
-
-function excelCellWithStyle(value, type = 'String', styleId = '') {
-  const styleAttr = styleId ? ` ss:StyleID="${excelXmlEscape(styleId)}"` : '';
-  if (value == null || value === '') return `<Cell${styleAttr}/>`;
-  if (type === 'Number' || type === 'Percent') {
-    const number = Number(value);
-    if (!Number.isFinite(number)) return `<Cell${styleAttr}><Data ss:Type="String">${excelXmlEscape(value)}</Data></Cell>`;
-    return `<Cell${styleAttr}><Data ss:Type="Number">${number}</Data></Cell>`;
-  }
-  return `<Cell${styleAttr}><Data ss:Type="String">${excelXmlEscape(value)}</Data></Cell>`;
-}
-
-function getClientTrackingReportPo(project) {
-  const list = Array.isArray(project?.customerPoList) ? project.customerPoList : [];
-  const candidates = [project?.customerPo, ...list, project?.customerPoDisplay]
-    .map((value) => String(value || '').trim())
-    .filter((value) => value && !/aguardando\s+po/i.test(value));
-  return Array.from(new Set(candidates)).join(', ');
-}
-
-function clientReportNumberValue(value) {
-  if (value == null || value === '' || value === '—') return '';
-  let text = String(value).trim().replace(/\s/g, '');
-  if (!text) return '';
-  const hasComma = text.includes(',');
-  const hasDot = text.includes('.');
-  if (hasComma && hasDot) {
-    text = text.lastIndexOf(',') > text.lastIndexOf('.')
-      ? text.replace(/\./g, '').replace(',', '.')
-      : text.replace(/,/g, '');
-  } else if (hasComma) {
-    text = text.replace(',', '.');
-  }
-  text = text.replace(/[^\d.-]/g, '');
-  const number = Number(text);
-  return Number.isFinite(number) ? number : '';
-}
-
-function clientReportPercentNumber(value) {
-  if (value == null || value === '') return '';
-  if (String(value).trim().toUpperCase() === 'N/A') return 'N/A';
-  const raw = String(value).replace('%', '').replace(',', '.').trim();
-  const number = Number(raw);
-  if (!Number.isFinite(number)) return '';
-  if (number > 1) return Number((number / 100).toFixed(6));
-  return number;
-}
-
-function getClientTrackingReportStageValue(source, label) {
-  const key = CLIENT_TRACKING_REPORT_STAGE_KEYS[label];
-  if (!key) return '';
-  const stageValues = source?.stageValues || {};
-  const direct = stageValues[key];
-  if (direct == null || direct === '') return '';
-  if (String(direct).trim().toUpperCase() === 'N/A') return 'N/A';
-  return clientReportPercentNumber(direct);
-}
-
-function getClientTrackingReportProjectText(project, spool = null) {
-  if (spool) {
-    const ref = String(spool.projectRef || spool.projectDisplay || '').trim();
-    if (ref) return ref.replace(/^BSP\s+/i, '');
-    return String(project?.projectNumber || project?.projectDisplay || '').replace(/^BSP\s+/i, '').trim();
-  }
-  return project?.projectDisplay || project?.projectNumber || '—';
-}
-
-function buildClientTrackingReportRows(project) {
-  if (!project) return [];
-  const po = getClientTrackingReportPo(project);
-  const baseProjectRow = {
-    'Primary': project.primary || project.rowNumber || '',
-    'Project': getClientTrackingReportProjectText(project),
-    'Client': getProjectClientLabel(project),
-    'Vessel': getProjectVesselLabel(project),
-    'Client PO Number': po,
-    'Priority': clientReportNumberValue(project.priority),
-    'Project Type': getProjectTypeLabel(project),
-    'PM': project.pm || '',
-    'Drawing': project.summaryDrawing || 'ISO',
-    'Line Nº': project.lineNumber || '',
-    'Size': project.size || '',
-    'Quantity Spools': Number(project.quantitySpools || getProjectItemCount(project) || 0),
-    'Kilos': Number(project.kilos || 0),
-    'Drawing Execution Advance%': getClientTrackingReportStageValue(project, 'Drawing Execution Advance%'),
-    'Spool Assemble and tack weld': getClientTrackingReportStageValue(project, 'Spool Assemble and tack weld'),
-    'Full welding execution': getClientTrackingReportStageValue(project, 'Full welding execution'),
-    'Non Destructive Examination (QC)': getClientTrackingReportStageValue(project, 'Non Destructive Examination (QC)'),
-    'Final Dimensional Inpection/3D (QC)': getClientTrackingReportStageValue(project, 'Final Dimensional Inpection/3D (QC)'),
-    'Hydro Test Pressure (QC)': getClientTrackingReportStageValue(project, 'Hydro Test Pressure (QC)'),
-    'HDG / FBE.  (PAINT)': getClientTrackingReportStageValue(project, 'HDG / FBE.  (PAINT)'),
-    'Surface preparation and/or coating': getClientTrackingReportStageValue(project, 'Surface preparation and/or coating'),
-    'Final Inspection': getClientTrackingReportStageValue(project, 'Final Inspection'),
-    'Package and Delivered': getClientTrackingReportStageValue(project, 'Package and Delivered'),
-    '% Individual Progress': clientReportPercentNumber(project.individualProgress || project.overallProgress || 0),
-    _summary: true,
-  };
-
-  const rows = [baseProjectRow];
-  const spools = getDisplaySpoolsForProject(project);
-  spools.forEach((spool, index) => {
-    rows.push({
-      'Primary': spool.primary || `${project.primary || project.rowNumber || ''}-${String(index + 1).padStart(2, '0')}`,
-      'Project': getClientTrackingReportProjectText(project, spool),
-      'Client': spool.client || getProjectClientLabel(project),
-      'Vessel': spool.vessel || getProjectVesselLabel(project),
-      'Client PO Number': po,
-      'Priority': clientReportNumberValue(spool.priority || project.priority),
-      'Project Type': spool.projectType || getProjectTypeLabel(project),
-      'PM': spool.pm || project.pm || '',
-      'Drawing': spool.drawing || spool.iso || '',
-      'Line Nº': spool.lineNumber || '',
-      'Size': spool.size || '',
-      'Quantity Spools': Number(spool.quantitySpools || 1),
-      'Kilos': Number(spool.kilos || 0),
-      'Drawing Execution Advance%': getClientTrackingReportStageValue(spool, 'Drawing Execution Advance%'),
-      'Spool Assemble and tack weld': getClientTrackingReportStageValue(spool, 'Spool Assemble and tack weld'),
-      'Full welding execution': getClientTrackingReportStageValue(spool, 'Full welding execution'),
-      'Non Destructive Examination (QC)': getClientTrackingReportStageValue(spool, 'Non Destructive Examination (QC)'),
-      'Final Dimensional Inpection/3D (QC)': getClientTrackingReportStageValue(spool, 'Final Dimensional Inpection/3D (QC)'),
-      'Hydro Test Pressure (QC)': getClientTrackingReportStageValue(spool, 'Hydro Test Pressure (QC)'),
-      'HDG / FBE.  (PAINT)': getClientTrackingReportStageValue(spool, 'HDG / FBE.  (PAINT)'),
-      'Surface preparation and/or coating': getClientTrackingReportStageValue(spool, 'Surface preparation and/or coating'),
-      'Final Inspection': getClientTrackingReportStageValue(spool, 'Final Inspection'),
-      'Package and Delivered': getClientTrackingReportStageValue(spool, 'Package and Delivered'),
-      '% Individual Progress': clientReportPercentNumber(spool.individualProgress ?? spool.overallProgress ?? 0),
-      _summary: false,
-    });
-  });
-  return rows;
-}
-
-function excelCellWithOptions(value, type = 'String', styleId = '', options = {}) {
-  const attrs = [];
-  if (styleId) attrs.push(`ss:StyleID="${excelXmlEscape(styleId)}"`);
-  if (Number.isFinite(Number(options.mergeAcross)) && Number(options.mergeAcross) > 0) attrs.push(`ss:MergeAcross="${Number(options.mergeAcross)}"`);
-  if (Number.isFinite(Number(options.index)) && Number(options.index) > 0) attrs.push(`ss:Index="${Number(options.index)}"`);
-  const attrText = attrs.length ? ` ${attrs.join(' ')}` : '';
-  if (value == null || value === '') return `<Cell${attrText}/>`;
-  if (type === 'Number' || type === 'Percent') {
-    const number = Number(value);
-    if (!Number.isFinite(number)) return `<Cell${attrText}><Data ss:Type="String">${excelXmlEscape(value)}</Data></Cell>`;
-    return `<Cell${attrText}><Data ss:Type="Number">${number}</Data></Cell>`;
-  }
-  return `<Cell${attrText}><Data ss:Type="String">${excelXmlEscape(value)}</Data></Cell>`;
-}
-
-function excelMergedCell(value, styleId = 'Section', mergeAcross = 1) {
-  return excelCellWithOptions(value, 'String', styleId, { mergeAcross });
-}
-
-function excelRow(cells = [], height = null) {
-  const heightAttr = Number.isFinite(Number(height)) ? ` ss:Height="${Number(height)}"` : '';
-  return `<Row${heightAttr}>${cells.join('')}</Row>`;
-}
-
-function excelBlankRow() {
-  return '<Row/>';
-}
-
-function excelSectionRow(title, subtitle = '', mergeAcross = 9) {
-  const text = subtitle ? `${title} | ${subtitle}` : title;
-  return excelRow([excelMergedCell(text, 'Section', mergeAcross)], 22);
-}
-
-function excelMetricPair(label, value) {
-  return [excelCellWithStyle(label, 'String', 'MetricLabel'), excelCellWithStyle(value, 'String', 'MetricValue')];
-}
-
-function excelMetricRows(metrics = [], pairsPerRow = 5) {
-  const rows = [];
-  for (let i = 0; i < metrics.length; i += pairsPerRow) {
-    const slice = metrics.slice(i, i + pairsPerRow);
-    const cells = [];
-    slice.forEach((item) => cells.push(...excelMetricPair(item[0], item[1])));
-    while (cells.length < pairsPerRow * 2) cells.push(excelCellWithStyle('', 'String', 'NormalCell'));
-    rows.push(excelRow(cells, 24));
-  }
-  return rows.join('');
-}
-
-function excelPercentNumber(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return '';
-  return Number((clampClientPercent(number) / 100).toFixed(6));
-}
-
-function excelSignedPercentNumber(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return '';
-  return Number((number / 100).toFixed(6));
-}
-
-function excelPanelStageStatus(percent) {
-  const value = clampClientPercent(percent);
-  if (value >= 99.9) return 'Concluído';
-  if (value > 0) return 'Em andamento';
-  return 'Não iniciado';
-}
-
-function buildClientExecutiveDetailRows(project) {
-  const spools = Array.isArray(project?.spools) ? [...project.spools] : [];
-  return spools.sort(compareClientSpoolsByPriority).map((spool) => {
-    const state = getClientSpoolVisualState(spool);
-    const statusText = spool?.currentStatus || spool?.stage || uiStateLabel(spool?.uiState);
-    return {
-      iso: spool.iso || spool.tag || spool.projectRef || '—',
-      description: spool.description || '—',
-      observations: spool.observations ? String(spool.observations).trim() : '—',
-      status: statusText || '—',
-      sector: spool.currentSector || spool.operationalSector || '—',
-      progress: excelPercentNumber(spool.overallProgress),
-      kilos: Number(spool.kilos || 0),
-      state,
-    };
-  });
-}
-
-function buildClientExecutivePanelWorkbook(project) {
-  const reportRows = buildClientTrackingReportRows(project);
-  const safeProjectName = sanitizeWorksheetName((project?.projectNumber || project?.projectDisplay || 'Painel').replace(/^BSP\s+/i, '') || 'Painel');
-  const status = getProjectStatusPresentation(project);
-  const stages = getClientProductionStages(project);
-  const overall = getClientOverallProgress(project);
-  const fabrication = getClientFabricationProgress(project);
-  const plannedToday = getClientPlannedToday(project);
-  const completedTags = getClientCompletedTags(project);
-  const totalTags = getProjectItemCount(project);
-  const remainingTags = Math.max(0, totalTags - completedTags);
-  const weight = Number(project?.kilos || 0);
-  const welded = Number(project?.weldedWeightKg || 0);
-  const pending = Math.max(0, weight - welded);
-  const timeline = getClientStageTimeline(project);
-  const attention = getClientAttentionPoints(project);
-  const scheduleRows = buildClientExecutiveSchedule(project);
-  const curveRows = buildClientSCurveData(project);
-  const detailRows = buildClientExecutiveDetailRows(project);
-  const startDate = clientFormatDateValue(getClientAnalyticStartDate(project));
-  const finishDate = clientFormatDateValue(getClientAnalyticFinishDate(project));
-  const shipmentDate = clientFormatDateValue(getProjectShipmentDate(project));
-  const deviationPercent = Math.max(0, plannedToday - overall);
-  const generatedAt = new Date().toLocaleString('pt-BR');
-  const po = getClientTrackingReportPo(project) || '—';
-
-  const panelCols = [120, 145, 120, 145, 120, 145, 120, 145, 120, 145].map((width) => `<Column ss:Width="${width}"/>`).join('');
-  const panelRows = [];
-  panelRows.push(excelRow([excelMergedCell('STEP OIL & GAS | SPOOL FABRICATION - DASHBOARD', 'PanelTitle', 9)], 30));
-  panelRows.push(excelRow([excelMergedCell(`${getClientProjectDisplayCode(project)} • ${getProjectClientLabel(project)} • ${getProjectVesselLabel(project)}`, 'PanelSubtitle', 9)], 24));
-  panelRows.push(excelRow([excelMergedCell(`Exportado em ${generatedAt} | Layout completo do painel executivo do cliente`, 'PanelMeta', 9)], 20));
-  panelRows.push(excelBlankRow());
-
-  panelRows.push(excelSectionRow('Informações principais', 'Tracking + Work in Progress'));
-  panelRows.push(excelMetricRows([
-    ['Project', getClientTrackingReportProjectText(project)],
-    ['Client', getProjectClientLabel(project)],
-    ['Vessel', getProjectVesselLabel(project)],
-    ['Client PO Number', po],
-    ['PM', project?.pm || '—'],
-    ['Priority', project?.priority || '—'],
-    ['Project Type', getProjectTypeLabel(project) || '—'],
-    ['Status', status.text || '—'],
-    ['Início', startDate || '—'],
-    ['Término planejado', finishDate || '—'],
-    ['Planejado hoje', formatPercent(plannedToday)],
-    ['Desvio', formatPercent(deviationPercent)],
-    ['Envio efetivo', shipmentDate || '—'],
-    ['Etapa atual', getProjectCurrentStageDisplay(project) || '—'],
-    ['M² programada', formatNumber(project?.m2Painting, 3)],
-  ]));
-  panelRows.push(excelBlankRow());
-
-  panelRows.push(excelSectionRow('KPIs do painel', 'Visão executiva'));
-  panelRows.push(excelRow([
-    excelCellWithStyle('Indicador', 'String', 'Header'),
-    excelCellWithStyle('Valor', 'String', 'Header'),
-    excelCellWithStyle('Indicador', 'String', 'Header'),
-    excelCellWithStyle('Valor', 'String', 'Header'),
-    excelCellWithStyle('Indicador', 'String', 'Header'),
-    excelCellWithStyle('Valor', 'String', 'Header'),
-    excelCellWithStyle('Indicador', 'String', 'Header'),
-    excelCellWithStyle('Valor', 'String', 'Header'),
-    excelCellWithStyle('Indicador', 'String', 'Header'),
-    excelCellWithStyle('Valor', 'String', 'Header'),
-  ], 22));
-  panelRows.push(excelMetricRows([
-    ['Overall Progress', formatPercent(overall)],
-    ['Fabrication Progress', formatPercent(fabrication)],
-    ['Peso programado', `${formatNumber(weight, 0)} kg`],
-    ['Peso soldado', `${formatNumber(welded, 0)} kg`],
-    ['Peso restante', `${formatNumber(pending, 0)} kg`],
-    ['Tags totais', formatNumber(totalTags, 0)],
-    ['Tags finalizadas', formatNumber(completedTags, 0)],
-    ['Tags restantes', formatNumber(remainingTags, 0)],
-    ['Progresso planejado hoje', formatPercent(plannedToday)],
-    ['Desvio acumulado', formatPercent(deviationPercent)],
-  ]));
-  panelRows.push(excelBlankRow());
-
-  panelRows.push(excelSectionRow('Progress by Production Stage', 'Etapas principais'));
-  panelRows.push(excelRow([
-    excelCellWithStyle('Etapa', 'String', 'Header'),
-    excelCellWithStyle('Progresso', 'String', 'Header'),
-    excelCellWithStyle('Status', 'String', 'Header'),
-    excelMergedCell('', 'Header', 6),
-  ], 22));
-  stages.forEach((stage) => {
-    panelRows.push(excelRow([
-      excelCellWithStyle(stage.label, 'String', 'NormalCell'),
-      excelCellWithStyle(excelPercentNumber(stage.percent), 'Percent', 'Percent'),
-      excelCellWithStyle(excelPanelStageStatus(stage.percent), 'String', stage.percent >= 99.9 ? 'Good' : stage.percent > 0 ? 'Warning' : 'NormalCell'),
-      excelMergedCell('', 'NormalCell', 6),
-    ], 22));
-  });
-  panelRows.push(excelBlankRow());
-
-  panelRows.push(excelSectionRow('Timeline operacional', 'Resumo dos passos do schedule'));
-  panelRows.push(excelRow([
-    excelCellWithStyle('Etapa', 'String', 'Header'),
-    excelCellWithStyle('Progresso', 'String', 'Header'),
-    excelCellWithStyle('Estado', 'String', 'Header'),
-    excelMergedCell('', 'Header', 6),
-  ], 22));
-  timeline.forEach((item) => {
-    panelRows.push(excelRow([
-      excelCellWithStyle(item.label, 'String', 'NormalCell'),
-      excelCellWithStyle(excelPercentNumber(item.percent), 'Percent', 'Percent'),
-      excelCellWithStyle(excelPanelStageStatus(item.percent), 'String', item.percent >= 99.9 ? 'Good' : item.percent > 0 ? 'Warning' : 'NormalCell'),
-      excelMergedCell('', 'NormalCell', 6),
-    ], 22));
-  });
-  panelRows.push(excelBlankRow());
-
-  panelRows.push(excelSectionRow('S-Curve | Planejado x Realizado', 'Dados que alimentam a curva'));
-  panelRows.push(excelRow([
-    excelCellWithStyle('Data', 'String', 'Header'),
-    excelCellWithStyle('Planejado', 'String', 'Header'),
-    excelCellWithStyle('Realizado', 'String', 'Header'),
-    excelCellWithStyle('Desvio', 'String', 'Header'),
-    excelCellWithStyle('Marco / Observação', 'String', 'Header'),
-    excelMergedCell('', 'Header', 4),
-  ], 22));
-  curveRows.forEach((point) => {
-    const planned = Number(point.planned || 0);
-    const actual = point.actual == null ? '' : Number(point.actual || 0);
-    const deviation = actual === '' ? '' : actual - planned;
-    panelRows.push(excelRow([
-      excelCellWithStyle(clientFormatDateValue(point.date), 'String', 'NormalCell'),
-      excelCellWithStyle(excelPercentNumber(planned), 'Percent', 'Percent'),
-      excelCellWithStyle(actual === '' ? '—' : excelPercentNumber(actual), actual === '' ? 'String' : 'Percent', actual === '' ? 'Muted' : 'Percent'),
-      excelCellWithStyle(deviation === '' ? '—' : excelSignedPercentNumber(deviation), deviation === '' ? 'String' : 'Percent', deviation > 0 ? 'Good' : deviation < 0 ? 'Warning' : 'Percent'),
-      excelCellWithStyle(point.trackingLabel || '', 'String', 'NormalCell'),
-      excelMergedCell('', 'NormalCell', 4),
-    ], 20));
-  });
-  panelRows.push(excelBlankRow());
-
-  panelRows.push(excelSectionRow('Schedule Executivo da BSP', 'Planejado + datas reais do Tracking quando preenchidas'));
-  panelRows.push(excelRow([
-    excelCellWithStyle('Etapa', 'String', 'Header'),
-    excelCellWithStyle('%', 'String', 'Header'),
-    excelCellWithStyle('Prazo médio', 'String', 'Header'),
-    excelCellWithStyle('Início', 'String', 'Header'),
-    excelCellWithStyle('Término', 'String', 'Header'),
-    excelCellWithStyle('Status', 'String', 'Header'),
-    excelCellWithStyle('Desvio', 'String', 'Header'),
-    excelMergedCell('', 'Header', 2),
-  ], 22));
-  scheduleRows.forEach((row) => {
-    const state = getClientScheduleVisualState(row.progress);
-    const statusText = state === 'completed' ? 'Concluído' : state === 'in-progress' ? 'Em andamento' : 'Não iniciado';
-    panelRows.push(excelRow([
-      excelCellWithStyle(row.label || '—', 'String', row.type === 'group' ? 'Summary' : 'NormalCell'),
-      excelCellWithStyle(excelPercentNumber(row.progress), 'Percent', 'Percent'),
-      excelCellWithStyle(`${formatNumber(row.duration, 0)}d`, 'String', 'NormalCell'),
-      excelCellWithStyle(formatClientDateShort(row.start), 'String', 'NormalCell'),
-      excelCellWithStyle(formatClientDateShort(row.finish), 'String', 'NormalCell'),
-      excelCellWithStyle(statusText, 'String', state === 'completed' ? 'Good' : state === 'in-progress' ? 'Warning' : 'NormalCell'),
-      excelCellWithStyle(Number.isFinite(row.deviationDays) && row.deviationDays !== 0 ? `${row.deviationDays > 0 ? '+' : ''}${row.deviationDays}d` : '—', 'String', row.deviationDays > 0 ? 'Warning' : 'NormalCell'),
-      excelMergedCell('', 'NormalCell', 2),
-    ], 20));
-  });
-  panelRows.push(excelBlankRow());
-
-  panelRows.push(excelSectionRow('S-Curve | Attention Points', 'Análise automática'));
-  if (attention.length) {
-    attention.forEach((item, index) => panelRows.push(excelRow([
-      excelCellWithStyle(index + 1, 'Number', 'Number'),
-      excelCellWithOptions(item, 'String', 'NormalCell', { mergeAcross: 8 }),
-    ], 22)));
-  } else {
-    panelRows.push(excelRow([excelMergedCell('Nenhum ponto de atenção automático encontrado.', 'Muted', 9)], 22));
-  }
-  panelRows.push(excelBlankRow());
-
-  panelRows.push(excelSectionRow('Report Tracking + Work in Progress', 'Tabela consolidada da BSP e spools'));
-  panelRows.push(excelRow(CLIENT_TRACKING_REPORT_COLUMNS.map((column) => excelCellWithStyle(column.label, 'String', 'Header')), 26));
-  reportRows.forEach((row) => {
-    const rowStyle = row._summary ? 'Summary' : 'NormalCell';
-    const cells = CLIENT_TRACKING_REPORT_COLUMNS.map((column) => {
-      const value = row[column.label];
-      if (column.type === 'number') return excelCellWithStyle(value, 'Number', row._summary ? 'SummaryNumber' : 'Number');
-      if (column.type === 'percent' || column.type === 'percent-or-text') {
-        if (String(value).trim().toUpperCase() === 'N/A') return excelCellWithStyle('N/A', 'String', rowStyle);
-        return excelCellWithStyle(value, 'Percent', row._summary ? 'SummaryPercent' : 'Percent');
-      }
-      return excelCellWithStyle(value, 'String', rowStyle);
-    });
-    panelRows.push(excelRow(cells, row._summary ? 24 : 21));
-  });
-
-  const reportColumnDefs = CLIENT_TRACKING_REPORT_COLUMNS.map((column) => `<Column ss:Width="${column.width || 110}"/>`).join('');
-  const reportSheetRows = [];
-  reportSheetRows.push(excelRow([excelMergedCell('Report Tracking + Work in Progress', 'PanelTitle', Math.max(1, CLIENT_TRACKING_REPORT_COLUMNS.length - 1))], 28));
-  reportSheetRows.push(excelRow([excelMergedCell(`${getClientProjectDisplayCode(project)} | PO ${po}`, 'PanelSubtitle', Math.max(1, CLIENT_TRACKING_REPORT_COLUMNS.length - 1))], 22));
-  reportSheetRows.push(excelBlankRow());
-  reportSheetRows.push(excelRow(CLIENT_TRACKING_REPORT_COLUMNS.map((column) => excelCellWithStyle(column.label, 'String', 'Header')), 26));
-  reportRows.forEach((row) => {
-    const rowStyle = row._summary ? 'Summary' : 'NormalCell';
-    const cells = CLIENT_TRACKING_REPORT_COLUMNS.map((column) => {
-      const value = row[column.label];
-      if (column.type === 'number') return excelCellWithStyle(value, 'Number', row._summary ? 'SummaryNumber' : 'Number');
-      if (column.type === 'percent' || column.type === 'percent-or-text') {
-        if (String(value).trim().toUpperCase() === 'N/A') return excelCellWithStyle('N/A', 'String', rowStyle);
-        return excelCellWithStyle(value, 'Percent', row._summary ? 'SummaryPercent' : 'Percent');
-      }
-      return excelCellWithStyle(value, 'String', rowStyle);
-    });
-    reportSheetRows.push(excelRow(cells, row._summary ? 24 : 21));
-  });
-
-  const detailColumnDefs = [145, 260, 300, 160, 160, 90, 95].map((width) => `<Column ss:Width="${width}"/>`).join('');
-  const detailSheetRows = [];
-  detailSheetRows.push(excelRow([excelMergedCell('Detalhamento da obra', 'PanelTitle', 6)], 28));
-  detailSheetRows.push(excelRow([excelMergedCell(`${getClientProjectDisplayCode(project)} | ${getProjectClientLabel(project)}`, 'PanelSubtitle', 6)], 22));
-  detailSheetRows.push(excelBlankRow());
-  detailSheetRows.push(excelRow(['Tag/ISO', 'Descrição', 'Observação', 'Status', 'Etapa', '%', 'Peso'].map((label) => excelCellWithStyle(label, 'String', 'Header')), 26));
-  if (detailRows.length) {
-    detailRows.forEach((row) => {
-      detailSheetRows.push(excelRow([
-        excelCellWithStyle(row.iso, 'String', 'NormalCell'),
-        excelCellWithStyle(row.description, 'String', 'NormalCell'),
-        excelCellWithStyle(row.observations, 'String', 'NormalCell'),
-        excelCellWithStyle(row.status, 'String', row.state === 'completed' ? 'Good' : row.state === 'in-progress' ? 'Warning' : 'NormalCell'),
-        excelCellWithStyle(row.sector, 'String', 'NormalCell'),
-        excelCellWithStyle(row.progress, 'Percent', 'Percent'),
-        excelCellWithStyle(row.kilos, 'Number', 'Number'),
-      ], 22));
-    });
-  } else {
-    detailSheetRows.push(excelRow([excelMergedCell('Nenhuma tag detalhada encontrada para esta BSP.', 'Muted', 6)], 22));
-  }
-
-  const styles = `
- <Styles>
-  <Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Center"/><Font ss:FontName="Arial" ss:Size="10"/></Style>
-  <Style ss:ID="PanelTitle"><Alignment ss:Vertical="Center" ss:Horizontal="Center"/><Font ss:Bold="1" ss:Color="#FFFFFF" ss:Size="14"/><Interior ss:Color="#0B3A5A" ss:Pattern="Solid"/></Style>
-  <Style ss:ID="PanelSubtitle"><Alignment ss:Vertical="Center" ss:Horizontal="Center"/><Font ss:Bold="1" ss:Color="#0B3A5A" ss:Size="11"/><Interior ss:Color="#DFF4FF" ss:Pattern="Solid"/></Style>
-  <Style ss:ID="PanelMeta"><Alignment ss:Vertical="Center" ss:Horizontal="Center"/><Font ss:Color="#475569" ss:Size="9"/><Interior ss:Color="#F8FAFC" ss:Pattern="Solid"/></Style>
-  <Style ss:ID="Section"><Alignment ss:Vertical="Center"/><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#0F766E" ss:Pattern="Solid"/></Style>
-  <Style ss:ID="Header"><Alignment ss:Vertical="Center" ss:Horizontal="Center" ss:WrapText="1"/><Font ss:Bold="1" ss:Color="#0F2F46"/><Interior ss:Color="#EAF6FB" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#94A3B8"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2E8F0"/></Borders></Style>
-  <Style ss:ID="MetricLabel"><Alignment ss:Vertical="Center"/><Font ss:Bold="1" ss:Color="#0F766E" ss:Size="9"/><Interior ss:Color="#F0FDFA" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#CCFBF1"/></Borders></Style>
-  <Style ss:ID="MetricValue"><Alignment ss:Vertical="Center" ss:WrapText="1"/><Font ss:Bold="1" ss:Color="#0F172A"/><Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2E8F0"/></Borders></Style>
-  <Style ss:ID="NormalCell"><Alignment ss:Vertical="Center" ss:WrapText="1"/><Font ss:Color="#1E293B"/><Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2E8F0"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#EEF2F7"/></Borders></Style>
-  <Style ss:ID="Number"><Alignment ss:Vertical="Center"/><NumberFormat ss:Format="0.00"/><Font ss:Color="#1E293B"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2E8F0"/></Borders></Style>
-  <Style ss:ID="Percent"><Alignment ss:Vertical="Center"/><NumberFormat ss:Format="0.00%"/><Font ss:Color="#1E293B"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2E8F0"/></Borders></Style>
-  <Style ss:ID="Good"><Alignment ss:Vertical="Center" ss:WrapText="1"/><Font ss:Bold="1" ss:Color="#065F46"/><Interior ss:Color="#ECFDF5" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#A7F3D0"/></Borders></Style>
-  <Style ss:ID="Warning"><Alignment ss:Vertical="Center" ss:WrapText="1"/><Font ss:Bold="1" ss:Color="#92400E"/><Interior ss:Color="#FFFBEB" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#FDE68A"/></Borders></Style>
-  <Style ss:ID="Muted"><Alignment ss:Vertical="Center" ss:WrapText="1"/><Font ss:Color="#64748B" ss:Italic="1"/><Interior ss:Color="#F8FAFC" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E2E8F0"/></Borders></Style>
-  <Style ss:ID="Summary"><Alignment ss:Vertical="Center" ss:WrapText="1"/><Font ss:Bold="1" ss:Color="#0F172A"/><Interior ss:Color="#F1F5F9" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#94A3B8"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#94A3B8"/></Borders></Style>
-  <Style ss:ID="SummaryNumber"><Alignment ss:Vertical="Center"/><NumberFormat ss:Format="0.00"/><Font ss:Bold="1" ss:Color="#0F172A"/><Interior ss:Color="#F1F5F9" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#94A3B8"/></Borders></Style>
-  <Style ss:ID="SummaryPercent"><Alignment ss:Vertical="Center"/><NumberFormat ss:Format="0.00%"/><Font ss:Bold="1" ss:Color="#0F172A"/><Interior ss:Color="#F1F5F9" ss:Pattern="Solid"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#94A3B8"/></Borders></Style>
- </Styles>`;
-
-  return `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:html="http://www.w3.org/TR/REC-html40">
- <DocumentProperties xmlns="urn:schemas-microsoft-com:office:office">
-  <Title>${excelXmlEscape(`${project?.projectDisplay || 'BSP'} Painel Executivo`)}</Title>
-  <Author>STEP Dashboard</Author>
-  <Created>${new Date().toISOString()}</Created>
- </DocumentProperties>
- ${styles}
- <Worksheet ss:Name="${excelXmlEscape(sanitizeWorksheetName(`Painel ${safeProjectName}`))}">
-  <Table>${panelCols}${panelRows.join('')}</Table>
-  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>3</SplitHorizontal><TopRowBottomPane>3</TopRowBottomPane><ActivePane>2</ActivePane></WorksheetOptions>
- </Worksheet>
- <Worksheet ss:Name="Report Tracking WIP">
-  <Table>${reportColumnDefs}${reportSheetRows.join('')}</Table>
-  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>4</SplitHorizontal><TopRowBottomPane>4</TopRowBottomPane><ActivePane>2</ActivePane></WorksheetOptions>
- </Worksheet>
- <Worksheet ss:Name="Detalhamento">
-  <Table>${detailColumnDefs}${detailSheetRows.join('')}</Table>
-  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>4</SplitHorizontal><TopRowBottomPane>4</TopRowBottomPane><ActivePane>2</ActivePane></WorksheetOptions>
- </Worksheet>
-</Workbook>`;
-}
-
-function buildClientTrackingReportWorkbook(project) {
-  return buildClientExecutivePanelWorkbook(project);
-}
-
-function sanitizeWorksheetName(value) {
-  return String(value || 'Report')
-    .replace(/[\\/?:*\[\]]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 31) || 'Report';
-}
-
-function downloadClientTrackingReport(project) {
-  if (!project) {
-    window.alert('Não foi possível localizar a BSP para gerar o report.');
-    return;
-  }
-  const workbook = buildClientTrackingReportWorkbook(project);
-  const blob = new Blob(['\ufeff', workbook], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-  const po = sanitizeFilenamePart(getClientTrackingReportPo(project) || 'sem-po');
-  const projectPart = sanitizeFilenamePart(project.projectNumber || project.projectDisplay || 'bsp');
-  const filename = `painel_executivo_${projectPart}_PO_${po}_${new Date().toISOString().slice(0, 10)}.xls`;
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  window.setTimeout(() => {
-    URL.revokeObjectURL(link.href);
-    link.remove();
-  }, 0);
-}
-
 function buildFilteredProjectsExportRows() {
   const projects = Array.isArray(state.filteredProjects) ? state.filteredProjects : [];
   const stageOrder = Array.isArray(state.meta?.stageOrder) ? state.meta.stageOrder : [];
@@ -8423,44 +7578,8 @@ function readProjectsCache() {
   }
 }
 
-function hasResolvedCustomerPo(project) {
-  const values = [
-    project?.customerPo,
-    project?.customerPoDisplay,
-    ...(Array.isArray(project?.customerPoList) ? project.customerPoList : []),
-  ];
-  return values.some((value) => {
-    const text = String(value || '').trim();
-    return text && !/aguardando\s+po/i.test(text);
-  });
-}
-
-function isClientProjectsPayloadPoReady(payload) {
-  if (!isClientUser()) return true;
-  const projects = Array.isArray(payload?.projects) ? payload.projects : [];
-  if (!projects.length) return false;
-
-  // Quando a base complementar de PO respondeu, o payload está pronto mesmo que alguma BSP isolada
-  // permaneça sem PO por falta de correspondência no Smartsheet.
-  if (payload?.meta?.wipStepPoAvailable === true) return true;
-
-  // Fallbacks/snapshots antigos costumam vir com todas as BSPs como "Aguardando PO".
-  // Eles não podem ser tratados como carregamento final no Portal do Cliente.
-  if (projects.some(hasResolvedCustomerPo)) return true;
-
-  const servedFromFallback = Boolean(payload?.meta?.servedFromDiskFallback || payload?.meta?.source === 'disk-snapshot' || payload?.meta?.cacheReason === 'disk-fallback');
-  if (servedFromFallback) return false;
-
-  const allWaitingPo = projects.every((project) => /aguardando\s+po/i.test(String(getClientProjectDisplayCode(project) || '')));
-  return !allWaitingPo;
-}
-
 function writeProjectsCache(payload) {
   try {
-    if (isClientUser() && !isClientProjectsPayloadPoReady(payload)) {
-      console.warn('[Cache] Não salvou cache do Portal do Cliente sem PO carregada');
-      return;
-    }
     window.localStorage.setItem(getProjectsCacheKey(), JSON.stringify({
       savedAt: Date.now(),
       payload,
@@ -8496,12 +7615,6 @@ function shouldIgnoreCachedProjectsPayload(cacheEntry) {
   // Validação adicional: se o cache tem meta.clientPortal=true mas nenhum projeto, é inválido.
   if (isClientUser() && cacheEntry.payload.meta?.clientPortal && cachedProjects.length === 0) {
     console.warn('[Cache] Ignorando cache com clientPortal=true mas sem projetos');
-    return true;
-  }
-  // Evita reaproveitar snapshot antigo/fallback em que todas as BSPs aparecem como "Aguardando PO".
-  // Esse era o motivo de abrir em guia anônima sem PO e só corrigir depois de vários F5.
-  if (isClientUser() && !isClientProjectsPayloadPoReady(cacheEntry.payload)) {
-    console.warn('[Cache] Ignorando cache do Portal do Cliente sem PO carregada');
     return true;
   }
   return false;
@@ -8682,9 +7795,6 @@ async function loadProjects(options = {}) {
       }
       if (isClientUser() && projectsFromApi.length === 0) {
         console.warn('[LoadProjects] Aviso: usuário cliente recebeu 0 projetos da API');
-      }
-      if (isClientUser() && options.requireClientPo && !isClientProjectsPayloadPoReady(data)) {
-        throw new Error('As BSPs carregaram, mas as POs ainda não foram recebidas. Buscando a base completa novamente.');
       }
       state.lastProjectsFetchAt = Date.now();
       writeProjectsCache(data);
@@ -9927,8 +9037,7 @@ function hasDashboardDataReady() {
     const bspsText = String(document.getElementById('client-stat-bsps')?.textContent || '').trim();
     const vesselGrid = document.getElementById('client-vessel-grid');
     const hasVisibleClientCards = Boolean(vesselGrid && vesselGrid.querySelector('[data-client-vessel]'));
-    const poReady = isClientProjectsPayloadPoReady({ projects, meta: state.meta || {} });
-    return bspsText !== '' && bspsText !== '--' && bspsText !== '0' && hasVisibleClientCards && poReady;
+    return bspsText !== '' && bspsText !== '--' && bspsText !== '0' && hasVisibleClientCards;
   }
 
   const countText = String(searchCountEl?.textContent || '').trim();
@@ -9941,44 +9050,33 @@ function waitForNextRenderFrame() {
 }
 
 async function ensureDashboardDataReadyBeforeRelease(options = {}) {
-  const maxAttempts = Number(options.maxAttempts || 4);
+  const maxAttempts = Number(options.maxAttempts || 3);
   const retryDelayMs = Number(options.retryDelayMs || 900);
-  let lastError = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     await waitForNextRenderFrame();
     if (hasDashboardDataReady()) return true;
 
-    const clientPoPending = isClientUser() && !isClientProjectsPayloadPoReady({ projects: state.projects || [], meta: state.meta || {} });
     setLoginProgress(Math.min(96, 88 + attempt * 2), {
-      title: clientPoPending ? 'Carregando POs...' : 'Conferindo dados na tela...',
-      message: clientPoPending
-        ? 'As BSPs já foram localizadas. Agora estamos buscando a base completa de POs sem atualizar a página.'
-        : 'Estamos garantindo que as BSPs, POs e dashboards já apareceram no painel.',
-      detail: `Validação dos dados ${attempt}/${maxAttempts}.`,
+      title: 'Conferindo dados na tela...',
+      message: 'Estamos garantindo que as BSPs, POs e dashboards já apareceram no painel.',
+      detail: `Validação visual dos dados ${attempt}/${maxAttempts}.`,
     });
 
-    try {
-      await loadProjects({
-        force: attempt > 2 && clientPoPending,
-        skipLocalCache: true,
-        suppressLoadingState: true,
-        preferServerCache: false,
-        requireData: true,
-        requireClientPo: clientPoPending,
-      });
-    } catch (error) {
-      lastError = error;
-      console.warn('[Login] Revalidação de dados ainda pendente:', error?.message || error);
-    }
-
+    await loadProjects({
+      force: false,
+      skipLocalCache: false,
+      suppressLoadingState: true,
+      preferServerCache: true,
+      requireData: false,
+    });
     await waitForNextRenderFrame();
     if (hasDashboardDataReady()) return true;
 
     await new Promise((resolve) => window.setTimeout(resolve, retryDelayMs));
   }
 
-  throw new Error(lastError?.message || 'Os dados ainda não apareceram na tela. O painel não será liberado vazio; tente novamente em alguns segundos.');
+  throw new Error('Os dados ainda não apareceram na tela. O painel não será liberado vazio; tente novamente em alguns segundos.');
 }
 
 async function completeLoginProgress() {
@@ -11547,7 +10645,7 @@ async function handleLoginSubmit(event) {
       detail: 'Dashboard quase pronto.',
     });
 
-    await ensureDashboardDataReadyBeforeRelease({ maxAttempts: 4, retryDelayMs: 650 });
+    await ensureDashboardDataReadyBeforeRelease({ maxAttempts: 1, retryDelayMs: 300 });
 
     syncStageDraftsForCurrentSector();
     const autoOpenStageValidation = shouldOpenStageValidationWorkspaceFromUrl() && canValidateStageWorkspace();
@@ -11601,102 +10699,6 @@ async function handleLogout() {
 
 
 
-function waitStageUpdatesRetry(ms) {
-  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
-}
-
-async function fetchStageUpdatesPayloadWithRetry(attempts = 3) {
-  let lastError = null;
-  const maxAttempts = Math.max(1, Number(attempts) || 3);
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      const response = await fetch('/api/stage-updates', { credentials: 'same-origin', cache: 'no-store' });
-      const raw = await response.text().catch(() => '');
-      let data = null;
-      try { data = raw ? JSON.parse(raw) : null; } catch (_) { data = null; }
-
-      if (response.ok && data?.ok) return data;
-
-      const detail = data?.error
-        || data?.warning
-        || (raw && !raw.trim().startsWith('<') ? raw.slice(0, 180) : '')
-        || 'Falha ao carregar apontamentos setoriais.';
-      const error = new Error(response.status === 401
-        ? 'Sessão expirada. Faça login novamente para carregar os apontamentos.'
-        : detail);
-      error.status = response.status;
-      error.offline = Boolean(data?.offline);
-      error.payload = data;
-      throw error;
-    } catch (error) {
-      lastError = error;
-      const status = Number(error?.status || 0);
-      const canRetry = error?.offline || !status || status >= 500;
-      if (!canRetry || attempt >= maxAttempts) break;
-      await waitStageUpdatesRetry(500 + attempt * 650);
-    }
-  }
-  throw lastError || new Error('Falha ao carregar apontamentos setoriais.');
-}
-
-
-function mergeStageUpdatesById(incoming = []) {
-  const current = Array.isArray(state.stageUpdates) ? state.stageUpdates : [];
-  const incomingList = Array.isArray(incoming) ? incoming : [];
-  if (!incomingList.length) return current;
-  const incomingById = new Map(incomingList.map((item) => [String(item?.id || ''), item]).filter(([id]) => id));
-  const merged = current.map((item) => incomingById.has(String(item?.id || '')) ? { ...item, ...incomingById.get(String(item?.id || '')) } : item);
-  for (const item of incomingList) {
-    const id = String(item?.id || '');
-    if (id && !current.some((row) => String(row?.id || '') === id)) merged.unshift(item);
-  }
-  return merged;
-}
-
-function shouldValidateStageTrackingItem(item) {
-  if (!item || !isPendingStageStatus(item.status) || isReviewStageStatus(item.status)) return false;
-  if (item.trackingMatched === true) return false;
-  const status = String(item.trackingStatus || '').trim().toLowerCase();
-  return !status || ['checking', 'pending_check', 'timeout', 'not_found', 'waiting'].includes(status);
-}
-
-async function validateStageTrackingInBackground() {
-  if (!state.user || !canValidateStageWorkspace()) return;
-  if (state.stageTrackingValidationRunning) return;
-  const pending = (Array.isArray(state.stageUpdates) ? state.stageUpdates : [])
-    .filter(shouldValidateStageTrackingItem)
-    .slice(0, 25);
-  if (!pending.length) return;
-
-  state.stageTrackingValidationRunning = true;
-  const previousWarning = state.stageUpdatesWarning || '';
-  if (stageUpdatesModalEl && !stageUpdatesModalEl.classList.contains('hidden')) {
-    state.stageUpdatesWarning = 'Validando Tracking em segundo plano. A tela permanece aberta mesmo se o Smartsheet demorar.';
-    renderStageUpdatesModal();
-  }
-
-  try {
-    const ids = pending.map((item) => encodeURIComponent(String(item.id || ''))).join(',');
-    const response = await fetch(`/api/stage-updates?mode=tracking-check&ids=${ids}`, { credentials: 'same-origin', cache: 'no-store' });
-    const raw = await response.text().catch(() => '');
-    let data = null;
-    try { data = raw ? JSON.parse(raw) : null; } catch (_) { data = null; }
-    if (!response.ok || !data?.ok) {
-      throw new Error(data?.error || data?.warning || raw || 'Falha ao validar Tracking em segundo plano.');
-    }
-    state.stageUpdates = mergeStageUpdatesById(Array.isArray(data.updates) ? data.updates : []);
-    state.stageUpdatesWarning = data.warning || '';
-  } catch (error) {
-    state.stageUpdatesWarning = error.message || previousWarning || 'O Smartsheet demorou para validar o Tracking. A lista permanece disponível.';
-  } finally {
-    state.stageTrackingValidationRunning = false;
-    state.lastStageUpdatesFetchAt = Date.now();
-    if (stageUpdatesModalEl && !stageUpdatesModalEl.classList.contains('hidden')) {
-      renderStageUpdatesModal();
-    }
-  }
-}
-
 async function loadStageUpdates(options = {}) {
   if (!state.user) {
     state.stageUpdates = [];
@@ -11709,34 +10711,25 @@ async function loadStageUpdates(options = {}) {
   const now = Date.now();
   if (!options.force && options.background && now - state.lastStageUpdatesFetchAt < ALERTS_REFRESH_MS) return;
   try {
-    const data = await fetchStageUpdatesPayloadWithRetry(options.force ? 3 : 2);
+    const response = await fetch('/api/stage-updates', { credentials: 'same-origin', cache: 'no-store' });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data?.ok) throw new Error(data?.error || 'Falha ao carregar apontamentos setoriais.');
     state.lastStageUpdatesFetchAt = Date.now();
     state.stageUpdates = Array.isArray(data.updates) ? data.updates : [];
-    if (data.warning && stageUpdatesContentEl && stageUpdatesModalEl && !stageUpdatesModalEl.classList.contains('hidden')) {
-      state.stageUpdatesWarning = data.warning;
-    } else {
-      state.stageUpdatesWarning = '';
-    }
     if (normalizeSectorValue(state.user?.sector) === 'pcp') {
       const pendingForPcp = state.stageUpdates.filter((item) => isPendingStageStatus(item?.status));
       syncIncomingAlerts('stageUpdates', pendingForPcp);
     }
-    if (data?.trackingValidationDeferred && canValidateStageWorkspace()) {
-      window.setTimeout(() => validateStageTrackingInBackground().catch(() => {}), 250);
-    }
   } catch (error) {
     // v35.7: não bloquear o apontamento do setor quando a consulta do histórico/validação falhar.
     // O setor ainda precisa conseguir abrir a tela, buscar a BSP e enviar o apontamento.
-    if (!Array.isArray(state.stageUpdates) || !state.stageUpdates.length || !options.background) {
-      state.stageUpdates = [];
-    }
-    state.stageUpdatesWarning = error.message || 'Histórico de apontamentos indisponível no momento; você ainda pode lançar novos apontamentos.';
+    state.stageUpdates = [];
     state.lastStageUpdatesFetchAt = Date.now();
     if (stageUpdatesContentEl && stageUpdatesModalEl && !stageUpdatesModalEl.classList.contains('hidden')) {
       renderStageUpdatesModal();
       const warning = document.createElement('div');
       warning.className = 'stage-inline-warning';
-      warning.textContent = state.stageUpdatesWarning;
+      warning.textContent = error.message || 'Histórico de apontamentos indisponível no momento; você ainda pode lançar novos apontamentos.';
       stageUpdatesContentEl.prepend(warning);
     }
     return;
@@ -11751,7 +10744,6 @@ function renderStageSectorWorkspace() {
   if (isPcpPointing && !sector) {
     stageUpdatesContentEl.innerHTML = `
       <div class="stage-workspace-shell">
-        ${state.stageUpdatesWarning ? `<div class="stage-inline-warning">${escapeHtml(state.stageUpdatesWarning)}</div>` : ''}
         <section class="admin-card admin-card--wide">
           <div class="admin-card-head"><h4>Modo PCP de apontamento</h4></div>
           <label class="stack-field">
@@ -11771,7 +10763,6 @@ function renderStageSectorWorkspace() {
   const readyDrafts = getReadyStageDraftEntries(sector);
   stageUpdatesContentEl.innerHTML = `
     <div class="stage-workspace-shell">
-      ${state.stageUpdatesWarning ? `<div class="stage-inline-warning">${escapeHtml(state.stageUpdatesWarning)}</div>` : ''}
       ${isPcpPointing ? `
       <section class="admin-card admin-card--wide stage-pcp-pointing-card">
         <div class="admin-card-head">
@@ -12120,7 +11111,6 @@ function renderStageValidationWorkspace() {
 
   stageUpdatesContentEl.innerHTML = `
     <div class="stage-workspace-shell stage-validation-workspace" id="stage-validation">
-      ${state.stageUpdatesWarning ? `<div class="stage-inline-warning">${escapeHtml(state.stageUpdatesWarning)}</div>` : ''}
       <section class="admin-card admin-card--wide stage-validation-header-card">
         <div class="stage-toolbar">
           <label class="stack-field">
@@ -12780,34 +11770,7 @@ async function init() {
       openStageUpdatesModal({ loading: true });
     }
     setProjectsLoadingState('Carregando painel...');
-    try {
-      await loadProjects({
-        preferServerCache: true,
-        requireData: isClientUser(),
-        requireClientPo: isClientUser(),
-      });
-    } catch (error) {
-      console.warn('[Init] Dados iniciais ainda não liberados:', error?.message || error);
-      if (isClientUser()) {
-        setProjectsLoadingState('Carregando dados do cliente...');
-      } else {
-        setProjectsLoadingState(error?.message || 'Falha ao carregar painel.');
-      }
-    }
-
-    // v36.55: quando o usuário já está autenticado e abre uma guia nova/anônima,
-    // o init não passava pela validação do login. Se o endpoint respondesse vazio
-    // por cache/snapshot temporário, o Portal do Cliente ficava liberado com "--".
-    // Agora o cliente só é liberado quando existe carteira válida e PO carregada.
-    if (isClientUser()) {
-      try {
-        await ensureDashboardDataReadyBeforeRelease({ maxAttempts: 6, retryDelayMs: 850 });
-      } catch (error) {
-        console.warn('[Init] Portal do Cliente ainda sem dados válidos:', error?.message || error);
-        setProjectsLoadingState(error?.message || 'Os dados do cliente ainda não carregaram. Clique em Atualizar agora em alguns segundos.');
-      }
-    }
-
+    await loadProjects();
     syncStageDraftsForCurrentSector();
     startPostSessionBackgroundLoads({ autoOpenStageValidation });
     startPolling();

@@ -2,13 +2,29 @@ const { jsonResponse, requireSession, normalizeSectorValue } = require('./_auth'
 const { readJson, writeJson } = require('./_githubStore');
 const { isSupabaseConfigured, listStageUpdates, createStageUpdate, updateStageUpdate, deleteStageUpdates } = require('./_supabase');
 const { findProjectAndSpool, loadProjectPayload } = require('./_projectLookup');
-const { applyStageUpdatesToTracking, listHistoryDatePendencies } = require('./_smartsheetTracking');
+const { applyStageUpdatesToTracking, inspectStageUpdatesInTracking, listHistoryDatePendencies } = require('./_smartsheetTracking');
 
 const DATA_PATH = 'data/stage-updates.json';
 const SUPPORTED_SECTORS = ['engenharia', 'suprimento', 'pintura', 'inspecao', 'pendente_envio', 'producao', 'calderaria', 'solda'];
 const PROGRESS_OPTIONS = [25, 50, 75, 100];
 const PENDING_STATUSES = ['pending', 'pending_advance', 'pending_review'];
 const RESOLVED_STATUSES = ['resolved', 'resolved_advance', 'resolved_review'];
+const STAGE_ENRICH_TIMEOUT_MS = Number(process.env.STAGE_ENRICH_TIMEOUT_MS || 17000);
+const STAGE_HISTORY_TIMEOUT_MS = Number(process.env.STAGE_HISTORY_TIMEOUT_MS || 6000);
+
+function withStageTimeout(promise, ms, message) {
+  let timeoutId = null;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const err = new Error(message || 'A consulta demorou mais que o esperado.');
+      err.code = 'STAGE_TIMEOUT';
+      reject(err);
+    }, Math.max(500, Number(ms) || 2500));
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
 
 const TRACKING_FIELDS_BY_SECTOR = {
   engenharia: ['Drawing Execution Advance%'],
@@ -62,6 +78,41 @@ function normalizeStageWorkspaceText(value) {
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+
+function normalizeStageIdentity(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[–—−]/g, '-')
+    .toUpperCase()
+    .replace(/\([^)]*\)/g, '')
+    .replace(/[^A-Z0-9]+/g, '');
+}
+
+function stageIdentityMatches(left, right, minLength = 8) {
+  const a = normalizeStageIdentity(left);
+  const b = normalizeStageIdentity(right);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const min = Math.min(a.length, b.length);
+  if (min < minLength) return false;
+  return a.includes(b) || b.includes(a);
+}
+
+function uniqueStageTextCandidates(values = []) {
+  const seen = new Set();
+  const output = [];
+  for (const value of values.flatMap((item) => Array.isArray(item) ? item : [item])) {
+    const text = String(value || '').trim();
+    if (!text) continue;
+    const key = normalizeStageIdentity(text) || text.toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(text);
+  }
+  return output;
 }
 
 function inferStageSectorFromOwnText(value) {
@@ -193,13 +244,16 @@ function ensureQualityCompetenceAllowed(project, spool, sector, session) {
 
 function getSpoolCompetenceSector(project, spool) {
   const stageValues = spool?.stageValues || project?.stageValues || {};
-  const text = normalizeStageWorkspaceText([
+  const spoolOwnText = normalizeStageWorkspaceText([
     spool?.currentStatus,
     spool?.stage,
     spool?.flow?.status,
     spool?.currentSector,
     spool?.operationalSector,
     spool?.flow?.sector,
+  ].filter(Boolean).join(' '));
+  const text = normalizeStageWorkspaceText([
+    spoolOwnText,
     project?.currentStage,
     project?.currentStatus,
     project?.currentSector,
@@ -209,6 +263,9 @@ function getSpoolCompetenceSector(project, spool) {
   ].filter(Boolean).join(' '));
 
   const finished = Boolean(spool?.finished || spool?.projectFinishedFlag)
+    || spoolOwnText.includes('finalizado')
+    || spoolOwnText.includes('concluido')
+    || spoolOwnText.includes('concluído')
     || text.includes('finalizado');
   if (finished) return '';
 
@@ -317,19 +374,102 @@ function sectorLabel(value) {
   return labels[normalized] || value || '';
 }
 
-function findProjectInPayload(projects, projectRowId) {
-  const normalizedProjectId = String(projectRowId ?? '').trim();
-  return (Array.isArray(projects) ? projects : []).find((item) => {
-    const rowId = String(item?.rowId ?? '').trim();
-    const rowNumber = String(item?.rowNumber ?? '').trim();
-    return (rowId && rowId === normalizedProjectId) || (rowNumber && rowNumber === normalizedProjectId);
+function getProjectMatchCandidates(ref) {
+  if (ref && typeof ref === 'object') {
+    return uniqueStageTextCandidates([
+      ref.projectRowId,
+      ref.rowId,
+      ref.rowNumber,
+      ref.projectNumber,
+      ref.projectDisplay,
+      ref.project,
+      ref.bsp,
+    ]);
+  }
+  return uniqueStageTextCandidates([ref]);
+}
+
+function getProjectIdentityCandidates(project) {
+  return uniqueStageTextCandidates([
+    project?.rowId,
+    project?.rowNumber,
+    project?.projectNumber,
+    project?.projectDisplay,
+    project?.project,
+    project?.bsp,
+    project?.type,
+  ]);
+}
+
+function getSpoolMatchCandidates(ref) {
+  if (ref && typeof ref === 'object') {
+    return uniqueStageTextCandidates([
+      ref.spoolIso,
+      ref.spoolDescription,
+      ref.drawing,
+      ref.iso,
+      ref.lineNumber,
+    ]);
+  }
+  return uniqueStageTextCandidates([ref]);
+}
+
+function getSpoolIdentityCandidates(spool) {
+  return uniqueStageTextCandidates([
+    spool?.iso,
+    spool?.drawing,
+    spool?.lineNumber,
+    spool?.description,
+    spool?.tag,
+    spool?.spool,
+  ]);
+}
+
+function findSpoolInProject(project, spoolRef) {
+  const targets = getSpoolMatchCandidates(spoolRef);
+  const spools = Array.isArray(project?.spools) ? project.spools : [];
+  if (!targets.length || !spools.length) return null;
+  return spools.find((spool) => {
+    const candidates = getSpoolIdentityCandidates(spool);
+    return candidates.some((candidate) => targets.some((target) => stageIdentityMatches(candidate, target, 8)));
   }) || null;
 }
 
-function findSpoolInProject(project, spoolIso) {
-  const normalizedSpoolIso = String(spoolIso || '').trim().toLowerCase();
-  const spools = Array.isArray(project?.spools) ? project.spools : [];
-  return spools.find((item) => String(item?.iso || '').trim().toLowerCase() === normalizedSpoolIso) || null;
+function findProjectInPayload(projects, projectRef) {
+  const source = Array.isArray(projects) ? projects : [];
+  const targets = getProjectMatchCandidates(projectRef);
+  const normalizedProjectId = String((projectRef && typeof projectRef === 'object') ? (projectRef.projectRowId ?? projectRef.rowId ?? '') : (projectRef ?? '')).trim();
+
+  if (normalizedProjectId) {
+    const exact = source.find((item) => {
+      const rowId = String(item?.rowId ?? '').trim();
+      const rowNumber = String(item?.rowNumber ?? '').trim();
+      return (rowId && rowId === normalizedProjectId) || (rowNumber && rowNumber === normalizedProjectId);
+    });
+    if (exact) return exact;
+  }
+
+  if (targets.length) {
+    const byIdentity = source.find((project) => {
+      const candidates = getProjectIdentityCandidates(project);
+      return candidates.some((candidate) => targets.some((target) => stageIdentityMatches(candidate, target, 6)));
+    });
+    if (byIdentity) return byIdentity;
+  }
+
+  const spoolTargets = getSpoolMatchCandidates(projectRef);
+  if (spoolTargets.length) {
+    const candidates = source.filter((project) => findSpoolInProject(project, projectRef));
+    if (candidates.length === 1) return candidates[0];
+    if (candidates.length > 1 && targets.length) {
+      return candidates.find((project) => {
+        const projectCandidates = getProjectIdentityCandidates(project);
+        return projectCandidates.some((candidate) => targets.some((target) => stageIdentityMatches(candidate, target, 6)));
+      }) || candidates[0];
+    }
+  }
+
+  return null;
 }
 
 function isPendingStatus(status) {
@@ -346,40 +486,118 @@ function isReviewStatus(status) {
 
 function applyTrackingVerification(update, project, spool) {
   const progress = Number(update?.progress || 0);
-  const trackingProgress = getTrackingProgressForSector(spool, update?.sector);
-  const trackingMatched = trackingProgress != null && trackingProgress >= progress;
+  const rawTrackingProgress = getTrackingProgressForSector(spool, update?.sector);
+  // Quando a BSP/spool existe, campo vazio no Tracking significa 0%, não “não localizado”.
+  // Isso evita bloquear o PCP com falso “Tracking não localizado” em linhas recém-abertas ou sem avanço.
+  const trackingProgress = rawTrackingProgress == null ? 0 : rawTrackingProgress;
+  const trackingMatched = trackingProgress >= progress;
   return {
     ...update,
     trackingCheckedAt: new Date().toISOString(),
-    trackingProgress: trackingProgress == null ? null : Number(trackingProgress.toFixed(2)),
+    trackingProgress: Number(trackingProgress.toFixed(2)),
     trackingMatched,
-    trackingStatus: trackingProgress == null ? 'not_found' : (trackingMatched ? 'matched' : 'waiting'),
+    trackingStatus: trackingMatched ? 'matched' : 'waiting',
   };
 }
 
 async function enrichUpdatesWithTracking(updates) {
   const list = Array.isArray(updates) ? updates : [];
   if (!list.length) return [];
+  const now = new Date().toISOString();
+
+  // v36.53: a validação PCP não deve depender do payload completo do dashboard
+  // (Tracking + Work in Progress + KPIs), porque esse cruzamento é mais pesado e
+  // gerava timeout antes de localizar os spools no Tracking. Para a coluna "Tracking"
+  // basta consultar diretamente a planilha Progress Tracking Sheet uma única vez e
+  // rodar um dry-run de atualização, sem gravar nada.
+  try {
+    const inspection = await inspectStageUpdatesInTracking(list);
+    const byId = new Map((inspection.results || []).map((result) => [String(result.id || ''), result]));
+    return list.map((item) => {
+      const result = byId.get(String(item.id || ''));
+      if (!result) {
+        return { ...item, trackingCheckedAt: now, trackingProgress: null, trackingMatched: false, trackingStatus: 'checking' };
+      }
+      if (!result.success || Number(result.rowCount || 0) <= 0) {
+        return { ...item, trackingCheckedAt: now, trackingProgress: null, trackingMatched: false, trackingStatus: 'not_found' };
+      }
+      const rawProgress = result.currentProgress == null ? 0 : Number(result.currentProgress);
+      const progress = Number.isFinite(rawProgress) ? Math.max(0, Math.min(100, rawProgress)) : 0;
+      const requested = Number(item?.progress || 0);
+      const matched = Boolean(result.trackingOk) || progress >= requested;
+      return {
+        ...item,
+        trackingCheckedAt: now,
+        trackingProgress: Number(progress.toFixed(2)),
+        trackingMatched: matched,
+        trackingStatus: matched ? 'matched' : 'waiting',
+        trackingRowCount: Number(result.rowCount || 0),
+        trackingColumn: result.progressColumn || item.trackingColumn || '',
+      };
+    });
+  } catch (directError) {
+    console.warn('Falha ao validar apontamentos diretamente no Tracking; tentando payload do dashboard:', directError.message);
+  }
+
+  // Fallback: mantém compatibilidade com a verificação antiga pelo payload de projetos,
+  // caso a API direta do Tracking esteja indisponível.
   let payload = null;
   try {
     payload = await loadProjectPayload({ allowFallback: false });
   } catch (_) {
-    payload = { projects: [] };
+    return list.map((item) => ({
+      ...item,
+      trackingCheckedAt: now,
+      trackingProgress: null,
+      trackingMatched: false,
+      trackingStatus: 'checking',
+    }));
   }
   const projects = Array.isArray(payload?.projects) ? payload.projects : [];
   return list.map((item) => {
-    const project = findProjectInPayload(projects, item?.projectRowId);
-    const spool = project ? findSpoolInProject(project, item?.spoolIso) : null;
+    const project = findProjectInPayload(projects, item);
+    const spool = project ? findSpoolInProject(project, item) : null;
     if (!project || !spool) {
       return {
         ...item,
-        trackingCheckedAt: new Date().toISOString(),
+        trackingCheckedAt: now,
         trackingProgress: null,
         trackingMatched: false,
         trackingStatus: 'not_found',
       };
     }
     return applyTrackingVerification(item, project, spool);
+  });
+}
+
+
+function prepareStageUpdatesFastResponse(updates) {
+  const now = new Date().toISOString();
+  return (Array.isArray(updates) ? updates : []).map((item) => {
+    if (!isPendingStatus(item?.status) || isReviewStatus(item?.status)) return item;
+    const progress = Number(item?.trackingProgress);
+    const hasProgress = Number.isFinite(progress);
+    const status = String(item?.trackingStatus || '').trim().toLowerCase();
+    if (hasProgress || status === 'matched' || status === 'waiting') return item;
+    return {
+      ...item,
+      trackingCheckedAt: item?.trackingCheckedAt || now,
+      trackingProgress: null,
+      trackingMatched: false,
+      trackingStatus: 'pending_check',
+    };
+  });
+}
+
+function selectUpdatesForTrackingCheck(updates, ids) {
+  const cleanIds = new Set((Array.isArray(ids) ? ids : [])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean));
+  const source = Array.isArray(updates) ? updates : [];
+  return source.filter((item) => {
+    if (!isPendingStatus(item?.status) || isReviewStatus(item?.status)) return false;
+    if (!cleanIds.size) return true;
+    return cleanIds.has(String(item?.id || ''));
   });
 }
 
@@ -755,26 +973,70 @@ exports.handler = async (event) => {
       }
       if (mode === 'history-date-pending') {
         if (!canValidate(session)) return jsonResponse(403, { ok: false, error: 'Apenas PCP ou administrador pode consultar pendências.' });
-        const pendencies = await listHistoryDatePendencies(updates);
-        return jsonResponse(200, { ok: true, pendencies });
+        try {
+          const pendencies = await withStageTimeout(
+            listHistoryDatePendencies(updates),
+            STAGE_HISTORY_TIMEOUT_MS,
+            'A consulta de pendências demorou mais que o esperado. Tente novamente em alguns segundos.'
+          );
+          return jsonResponse(200, { ok: true, pendencies });
+        } catch (error) {
+          const warning = error.message || 'Não foi possível consultar pendências de datas agora.';
+          console.warn('Falha ao consultar pendências de datas:', warning);
+          return jsonResponse(200, { ok: true, pendencies: [], warning });
+        }
       }
-      let enriched = updates;
-      let autoResolved = { changed: false, updates };
-      let warning = '';
-      try {
-        enriched = await enrichUpdatesWithTracking(updates);
-        autoResolved = await autoResolveTrackingMatchedUpdates(enriched, updates, session);
-      } catch (error) {
-        warning = error.message || 'Não foi possível cruzar apontamentos com o Tracking agora.';
-        console.warn('Falha ao enriquecer apontamentos com Tracking:', warning);
+      if (mode === 'tracking-check') {
+        if (!canValidate(session)) return jsonResponse(403, { ok: false, error: 'Apenas PCP ou administrador pode validar o Tracking.' });
+        const rawIds = String(event.queryStringParameters?.ids || '')
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean)
+          .slice(0, 25);
+        const selected = selectUpdatesForTrackingCheck(updates, rawIds);
+        if (!selected.length) {
+          return jsonResponse(200, { ok: true, updates: [], warning: listWarning, trackingValidationMode: 'empty' });
+        }
+        try {
+          const enriched = await withStageTimeout(
+            enrichUpdatesWithTracking(selected),
+            STAGE_ENRICH_TIMEOUT_MS,
+            'O Smartsheet demorou para responder. A lista principal foi mantida e você pode tentar novamente com menos itens selecionados.'
+          );
+          return jsonResponse(200, {
+            ok: true,
+            updates: enriched,
+            warning: listWarning,
+            trackingValidationMode: 'direct',
+          });
+        } catch (error) {
+          const warning = error.message || 'Não foi possível validar o Tracking agora.';
+          console.warn('Falha na validação sob demanda do Tracking:', warning);
+          return jsonResponse(200, {
+            ok: true,
+            updates: selected.map((item) => ({
+              ...item,
+              trackingCheckedAt: new Date().toISOString(),
+              trackingProgress: null,
+              trackingMatched: false,
+              trackingStatus: 'pending_check',
+            })),
+            warning: [listWarning, warning].filter(Boolean).join(' | '),
+            trackingValidationMode: 'deferred',
+          });
+        }
       }
+
+      // v36.54: a abertura da Validação PCP precisa ser rápida e nunca pode depender
+      // do Smartsheet. A validação do Tracking agora roda em chamada separada
+      // (?mode=tracking-check), evitando timeout de 30s e preservando a tela aberta.
+      const fastUpdates = prepareStageUpdatesFastResponse(updates);
       return jsonResponse(200, {
         ok: true,
-        updates: autoResolved.updates,
-        warning: [listWarning, warning].filter(Boolean).join(' | '),
-        autoResolvedCount: autoResolved.changed
-          ? autoResolved.updates.filter((item) => isResolvedStatus(item?.status) && String(item?.resolutionNote || '').includes('Tracking já estava OK')).length
-          : 0,
+        updates: fastUpdates,
+        warning: [listWarning].filter(Boolean).join(' | '),
+        trackingValidationDeferred: true,
+        autoResolvedCount: 0,
         permissions: {
           canCreate: canCreate(session),
           canValidate: canValidate(session),

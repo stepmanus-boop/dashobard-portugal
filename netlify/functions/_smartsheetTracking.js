@@ -2,6 +2,8 @@ const API_BASE = process.env.SMARTSHEET_API_BASE || 'https://api.smartsheet.com/
 const SHEET_NAME = process.env.SMARTSHEET_SHEET_NAME || 'Progress Tracking Sheet - Piping Fabrication';
 const SHEET_ID_ENV = process.env.SMARTSHEET_SHEET_ID || '';
 const TOKEN = process.env.SMARTSHEET_TOKEN || process.env.SMARTSHEET_ACCESS_TOKEN || process.env.SMARTSHEET_API_TOKEN || process.env.SMARTSHEET_BEARER_TOKEN || process.env.SMARTSHEET_PAT || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN || '5pP36OjBaD1W2HWyxf6aoGxXasPvEl8gbqOmQ';
+const TRACKING_SHEET_CACHE_MS = Number(process.env.TRACKING_SHEET_CACHE_MS || 2 * 60 * 1000);
+const SMARTSHEET_REQUEST_TIMEOUT_MS = Number(process.env.SMARTSHEET_REQUEST_TIMEOUT_MS || 15000);
 
 const TRACKING_PROGRESS_BY_SECTOR = {
   engenharia: 'Drawing Execution Advance%',
@@ -190,20 +192,35 @@ function findColumn(sheet, canonicalName, extraAliases = []) {
 
 async function apiFetch(path, options = {}) {
   if (!TOKEN) throw new Error('SMARTSHEET_TOKEN não configurado no Netlify.');
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-  });
-  if (!response.ok) {
-    const message = await response.text().catch(() => '');
-    throw new Error(`Smartsheet ${response.status}: ${message}`);
+
+  const timeoutMs = Math.max(3000, Number(options.timeoutMs || SMARTSHEET_REQUEST_TIMEOUT_MS) || 15000);
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      signal: controller ? controller.signal : options.signal,
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+    });
+    if (!response.ok) {
+      const message = await response.text().catch(() => '');
+      throw new Error(`Smartsheet ${response.status}: ${message}`);
+    }
+    const text = await response.text();
+    return text ? JSON.parse(text) : null;
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw new Error(`Smartsheet demorou mais de ${Math.round(timeoutMs / 1000)}s para responder. Tente novamente ou atualize itens selecionados em lote menor.`);
+    }
+    throw error;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
-  const text = await response.text();
-  return text ? JSON.parse(text) : null;
 }
 
 function normalizeName(value) {
@@ -215,7 +232,12 @@ function normalizeName(value) {
     .toLowerCase();
 }
 
-const cache = global.__STEP_TRACKING_WRITE_CACHE__ || { sheetId: null, sheetName: null };
+const cache = global.__STEP_TRACKING_WRITE_CACHE__ || {
+  sheetId: null,
+  sheetName: null,
+  sheet: null,
+  sheetFetchedAt: 0,
+};
 global.__STEP_TRACKING_WRITE_CACHE__ = cache;
 
 async function resolveSheetId() {
@@ -250,10 +272,17 @@ async function resolveSheetId() {
   throw new Error(`Sheet "${SHEET_NAME}" não encontrada.`);
 }
 
-async function fetchTrackingSheet() {
+async function fetchTrackingSheet(options = {}) {
   const sheetId = await resolveSheetId();
+  const force = Boolean(options.force);
+  const now = Date.now();
+  if (!force && cache.sheet && String(cache.sheetId || '') === String(sheetId) && now - Number(cache.sheetFetchedAt || 0) < TRACKING_SHEET_CACHE_MS) {
+    return { sheetId, sheet: cache.sheet, cached: true };
+  }
   const sheet = await apiFetch(`/sheets/${sheetId}?includeAll=true`);
-  return { sheetId, sheet };
+  cache.sheet = sheet;
+  cache.sheetFetchedAt = Date.now();
+  return { sheetId, sheet, cached: false };
 }
 
 function invalidateProjectCache() {
@@ -273,6 +302,8 @@ async function updateRows(sheetId, rowChangesMap) {
     method: 'PUT',
     body: JSON.stringify(rows),
   });
+  cache.sheet = null;
+  cache.sheetFetchedAt = 0;
   invalidateProjectCache();
   return { rows, response };
 }
@@ -312,27 +343,83 @@ function getDescendantRows(sheet, projectRowId) {
   });
 }
 
+function uniqueTrackingCandidates(values = []) {
+  const seen = new Set();
+  const output = [];
+  for (const value of values.flatMap((item) => Array.isArray(item) ? item : [item])) {
+    const text = String(value || '').trim();
+    if (!text) continue;
+    const key = normalizeSpoolIdentity(text) || text.toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(text);
+  }
+  return output;
+}
+
+function getProjectScopeRows(sheet, update) {
+  const rows = Array.isArray(sheet?.rows) ? sheet.rows : [];
+  const byId = new Map(rows.map((row) => [String(row.id), row]));
+  const scoped = new Map();
+
+  for (const row of getDescendantRows(sheet, update?.projectRowId)) {
+    scoped.set(String(row.id), row);
+  }
+
+  const projectColumn = findColumn(sheet, 'Project');
+  const projectTargets = uniqueTrackingCandidates([
+    update?.projectNumber,
+    update?.projectDisplay,
+    update?.project,
+    update?.bsp,
+  ]);
+
+  if (projectColumn && projectTargets.length) {
+    const projectMatchedRows = rows.filter((row) => {
+      const value = getCellDisplay(row, projectColumn);
+      return value && projectTargets.some((target) => compactContainsMatch(value, target));
+    });
+
+    for (const row of projectMatchedRows) {
+      scoped.set(String(row.id), row);
+      for (const child of getDescendantRows(sheet, row.id)) {
+        scoped.set(String(child.id), child);
+      }
+      // Se a linha encontrada for filha, inclui também os irmãos sob o mesmo pai.
+      const parentId = row.parentId == null ? '' : String(row.parentId);
+      if (parentId && byId.has(parentId)) {
+        scoped.set(parentId, byId.get(parentId));
+        for (const sibling of getDescendantRows(sheet, parentId)) {
+          scoped.set(String(sibling.id), sibling);
+        }
+      }
+    }
+  }
+
+  return Array.from(scoped.values());
+}
+
+function rowsMatchingDrawing(rows, drawingColumn, targets) {
+  if (!drawingColumn || !targets.length) return [];
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const drawing = getCellDisplay(row, drawingColumn);
+    if (!drawing) return false;
+    return targets.some((target) => compactContainsMatch(drawing, target));
+  });
+}
+
 function getMatchingTrackingRows(sheet, update) {
   const drawingColumn = findColumn(sheet, 'Drawing');
-  const projectRows = getDescendantRows(sheet, update?.projectRowId);
-  const sourceRows = projectRows.length ? projectRows : (Array.isArray(sheet?.rows) ? sheet.rows : []);
-  const targets = [update?.spoolIso, update?.spoolDescription, update?.drawing]
-    .map((item) => String(item || '').trim())
-    .filter(Boolean);
-  const matches = sourceRows.filter((row) => {
-    const drawing = getCellDisplay(row, drawingColumn);
-    if (!drawing) return false;
-    return targets.some((target) => compactContainsMatch(drawing, target));
-  });
+  const allRows = Array.isArray(sheet?.rows) ? sheet.rows : [];
+  const sourceRows = getProjectScopeRows(sheet, update);
+  const targets = uniqueTrackingCandidates([update?.spoolIso, update?.spoolDescription, update?.drawing]);
 
-  if (matches.length || projectRows.length) return matches;
+  const scopedMatches = rowsMatchingDrawing(sourceRows, drawingColumn, targets);
+  if (scopedMatches.length) return scopedMatches;
 
-  // Fallback controlado: só usa o Tracking inteiro quando o projeto não foi encontrado pelo parentId.
-  return (Array.isArray(sheet?.rows) ? sheet.rows : []).filter((row) => {
-    const drawing = getCellDisplay(row, drawingColumn);
-    if (!drawing) return false;
-    return targets.some((target) => compactContainsMatch(drawing, target));
-  });
+  // Fallback controlado: se o parentId salvo ficou antigo ou a hierarquia mudou,
+  // busca pelo Drawing no Tracking inteiro usando identidade compacta do spool/ISO.
+  return rowsMatchingDrawing(allRows, drawingColumn, targets);
 }
 
 function resolveInspectionProgressColumn(sheet, row) {
@@ -577,6 +664,12 @@ async function applyStageUpdatesToTracking(updates, options = {}) {
   };
 }
 
+async function inspectStageUpdatesInTracking(updates) {
+  const list = Array.isArray(updates) ? updates : [];
+  if (!list.length) return { ok: true, results: [], errors: [], changedRows: 0, dryRun: true };
+  return applyStageUpdatesToTracking(list, { dryRun: true });
+}
+
 async function listHistoryDatePendencies(updates) {
   const source = Array.isArray(updates) ? updates : [];
   const history100 = source.filter((item) => {
@@ -640,5 +733,6 @@ module.exports = {
   parsePercentValue,
   fetchTrackingSheet,
   applyStageUpdatesToTracking,
+  inspectStageUpdatesInTracking,
   listHistoryDatePendencies,
 };
