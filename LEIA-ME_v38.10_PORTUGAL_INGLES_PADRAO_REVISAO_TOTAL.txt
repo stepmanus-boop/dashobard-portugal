@@ -1,0 +1,45 @@
+PAINEL PORTUGAL v38.10 – Inglês padrão e revisão de tradução
+
+Objetivo:
+- O painel Portugal passa a abrir em inglês por padrão.
+- A chave de idioma foi separada da versão Brasil para não reaproveitar preferências antigas do navegador.
+- Textos estáticos e dinâmicos do painel, portal do cliente, visão executiva, apontamentos, admin, alertas, imagens e tela Yinson foram revisados.
+
+Alterações principais:
+1. site/i18n.js
+   - DEFAULT_LANG alterado para en-US.
+   - SOURCE_LANG mantido como pt-BR para permitir que a base antiga ainda seja traduzida corretamente.
+   - STORAGE_KEY alterado para step-dashboard-portugal-language.
+   - Dicionário inglês ampliado com textos faltantes.
+   - Alertas nativos do navegador passam pelo tradutor antes de aparecer.
+
+2. site/client-under-development.html
+   - Página independente da Yinson traduzida diretamente para inglês.
+   - Coluna IMAGEM alterada para IMAGE.
+   - Mensagens de carregamento/erro traduzidas.
+
+3. site/client-bsp-images.html
+   - Página independente de imagens da BSP traduzida diretamente para inglês.
+   - Arquivo/Ação/Ver imagem/erros traduzidos.
+
+4. site/manifest.webmanifest
+   - Nome, descrição e lang alterados para inglês.
+
+5. site/index.html / site/app.js / site/sw.js
+   - Versionamento de i18n e service worker atualizado.
+   - Cache PWA atualizado para liberar a nova versão.
+
+Validações realizadas:
+- node --check site/app.js
+- node --check site/i18n.js
+- node --check site/sw.js
+- node --check netlify/functions/projects.js
+- node --check netlify/functions/client-under-dev.js
+- node --check netlify/functions/client-under-dev-image.js
+- node --check netlify/functions/stage-updates.js
+- node --check netlify/functions/auth-login.js
+- node --check netlify/functions/auth-logout.js
+- npm run lint
+
+Observação:
+- npm run validate fora do Netlify continua acusando ausência de SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no ambiente local, esperado no sandbox.

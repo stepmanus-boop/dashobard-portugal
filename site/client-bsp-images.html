@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en-US">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Imagens da BSP</title>
-    <!-- Reaproveita a folha de estilos principal para manter o visual coerente -->
+    <title>BSP Images</title>
+    <!-- Reuses the main stylesheet to keep the visual consistent -->
     <link rel="stylesheet" href="./app.css" />
     <style>
       body {
@@ -62,7 +62,7 @@
         text-decoration: underline;
         cursor: pointer;
       }
-      /* Modal para visualização de imagem */
+      /* Image preview modal */
       .modal {
         position: fixed;
         top: 0;
@@ -104,32 +104,32 @@
     </style>
   </head>
   <body>
-    <h1 id="page-title">Imagens da BSP</h1>
+    <h1 id="page-title">BSP Images</h1>
     <div class="progress-container" id="progress-container" hidden>
       <div class="progress-bar" id="progress-bar"></div>
     </div>
     <table>
       <thead>
         <tr>
-          <th>Arquivo</th>
-          <th>Ação</th>
+          <th>File</th>
+          <th>Action</th>
         </tr>
       </thead>
       <tbody id="images-body">
-        <tr><td colspan="2" class="placeholder">Carregando imagens…</td></tr>
+        <tr><td colspan="2" class="placeholder">Loading images…</td></tr>
       </tbody>
     </table>
 
-    <!-- Modal de visualização de imagens -->
+    <!-- Image preview modal -->
     <div id="image-modal" class="modal">
       <div class="modal-content">
         <span class="modal-close" id="modal-close">&times;</span>
-        <img id="modal-img" src="" alt="Imagem" />
+        <img id="modal-img" src="" alt="Image" />
       </div>
     </div>
 
     <script>
-      // Exibe uma barra de progresso simples enquanto os dados são carregados
+      // Shows a simple progress bar while data is loading
       function startProgressBar() {
         const container = document.getElementById('progress-container');
         const bar = document.getElementById('progress-bar');
@@ -147,30 +147,30 @@
         };
       }
 
-      // Lê o rowId (projectId) da query string
+      // Reads rowId (projectId) from the query string
       function getRowId() {
         const params = new URLSearchParams(window.location.search);
         return params.get('projectId') || params.get('rowId');
       }
 
-      // Carrega as imagens usando a API
+      // Loads images using the API
       async function loadImages() {
         const tbody = document.getElementById('images-body');
         const rowId = getRowId();
         if (!rowId) {
-          tbody.innerHTML = '<tr><td colspan="2" class="placeholder">Parâmetro projectId ausente.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="2" class="placeholder">Missing projectId parameter.</td></tr>';
           return;
         }
         const stopProgress = startProgressBar();
         try {
           const res = await fetch(`/api/client-bsp-images?rowId=${encodeURIComponent(rowId)}`, { cache: 'no-store' });
-          if (!res.ok) throw new Error('Erro ao carregar imagens');
+          if (!res.ok) throw new Error('Error loading images');
           const json = await res.json();
           const images = Array.isArray(json.images) ? json.images : [];
           renderImages(images);
         } catch (err) {
           console.error(err);
-          tbody.innerHTML = '<tr><td colspan="2" class="placeholder">Falha ao carregar as imagens.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="2" class="placeholder">Failed to load images.</td></tr>';
         } finally {
           stopProgress();
         }
@@ -180,22 +180,22 @@
         const tbody = document.getElementById('images-body');
         tbody.innerHTML = '';
         if (!images.length) {
-          tbody.innerHTML = '<tr><td colspan="2" class="placeholder">Nenhuma imagem encontrada.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="2" class="placeholder">No image found.</td></tr>';
           return;
         }
         images.forEach((img, idx) => {
           const tr = document.createElement('tr');
-          const label = img.name || `Imagem ${idx + 1}`;
+          const label = img.name || `Image ${idx + 1}`;
           tr.innerHTML = `
             <td>${label}</td>
-            <td><a href="/api/client-under-dev-image?id=${img.id}" class="view-link image-link" data-img-name="${label}">Ver imagem</a></td>
+            <td><a href="/api/client-under-dev-image?id=${img.id}" class="view-link image-link" data-img-name="${label}">View image</a></td>
           `;
           tbody.appendChild(tr);
         });
         bindImageLinkEvents();
       }
 
-      // Associa eventos de clique para exibir a imagem em modal
+      // Binds click events to show the image in a modal
       function bindImageLinkEvents() {
         const links = document.querySelectorAll('.image-link');
         links.forEach((link) => {
@@ -203,7 +203,7 @@
             ev.preventDefault();
             ev.stopPropagation();
             const href = link.getAttribute('href');
-            const name = link.dataset.imgName || 'Imagem';
+            const name = link.dataset.imgName || 'Image';
             showImageModal(href, name);
           });
         });
@@ -233,11 +233,11 @@
       }
 
       document.addEventListener('DOMContentLoaded', () => {
-        // Atualiza o título com o ID, se disponível
+        // Updates the title with the ID, when available
         const rowId = getRowId();
         if (rowId) {
           const titleEl = document.getElementById('page-title');
-          if (titleEl) titleEl.textContent = `Imagens da BSP ${rowId}`;
+          if (titleEl) titleEl.textContent = `BSP Images ${rowId}`;
         }
         loadImages();
       });

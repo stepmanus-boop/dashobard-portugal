@@ -459,7 +459,7 @@ async function registerServiceWorker() {
       window.location.reload();
     });
 
-    const registration = await navigator.serviceWorker.register('./sw.js?v=41', { updateViaCache: 'none' });
+    const registration = await navigator.serviceWorker.register('./sw.js?v=43', { updateViaCache: 'none' });
     if (typeof registration.update === 'function') {
       registration.update().catch(() => {});
     }
@@ -8003,8 +8003,8 @@ function openClientBspExecutive(project, options = {}) {
           <button class="client-exec-pdf-button client-exec-report-button" type="button" data-client-download-report="${escapeHtml(project.rowId)}">Baixar Excel do Cronograma</button>
           ${canManageClientBspPanel(project) ? `<button class="client-exec-pdf-button client-exec-edit-button" type="button" data-client-bsp-edit="${escapeHtml(project.rowId)}">Editar datas / informações</button>` : ''}
           <!-- Botões de imagens da BSP: cliente apenas visualiza; importação fica restrita a admin/PM -->
-          <button class="client-exec-pdf-button client-exec-images-button" type="button" data-client-bsp-images="${escapeHtml(project.rowId)}">Imagens</button>
-          ${canManageClientBspPanel(project) ? `<button class="client-exec-pdf-button client-exec-upload-image-button" type="button" data-client-bsp-upload-image="${escapeHtml(project.rowId)}">Importar imagem</button>` : ''}
+          <button class="client-exec-pdf-button client-exec-images-button" type="button" data-client-bsp-images="${escapeHtml(project.rowId)}">Images</button>
+          ${canManageClientBspPanel(project) ? `<button class="client-exec-pdf-button client-exec-upload-image-button" type="button" data-client-bsp-upload-image="${escapeHtml(project.rowId)}">Import image</button>` : ''}
         </div>
       </div>
       <div class="client-exec-dates">
@@ -8129,7 +8129,7 @@ function ensureClientApiModal() {
           <h2 id="client-api-title">API do Portal do Cliente</h2>
           <p>Gere uma chave para consumir, de forma controlada, as informações que já aparecem neste painel.</p>
         </div>
-        <button class="client-api-close" type="button" data-client-api-close aria-label="Fechar">×</button>
+        <button class="client-api-close" type="button" data-client-api-close aria-label="Close">×</button>
       </div>
       <div class="client-api-body">
         <section class="client-api-card">
@@ -8314,10 +8314,10 @@ function ensureClientBspImagesModalEl() {
   modal.id = 'client-bsp-images-modal';
   modal.className = 'client-bsp-images-modal';
   modal.innerHTML = `
-    <div class="client-bsp-images-dialog" role="dialog" aria-modal="true" aria-label="Imagens da BSP">
+    <div class="client-bsp-images-dialog" role="dialog" aria-modal="true" aria-label="BSP Images">
       <div class="client-bsp-images-header">
-        <h2>Imagens da BSP</h2>
-        <button type="button" class="client-bsp-images-close" aria-label="Fechar">×</button>
+        <h2>BSP Images</h2>
+        <button type="button" class="client-bsp-images-close" aria-label="Close">×</button>
       </div>
       <div class="client-bsp-images-progress-container" hidden>
         <div class="client-bsp-images-progress-bar"></div>
@@ -8331,7 +8331,7 @@ function ensureClientBspImagesModalEl() {
             </tr>
           </thead>
           <tbody id="client-bsp-images-body">
-            <tr><td colspan="2" class="client-bsp-images-placeholder">Carregando imagens…</td></tr>
+            <tr><td colspan="2" class="client-bsp-images-placeholder">Loading images…</td></tr>
           </tbody>
         </table>
       </div>
@@ -8414,7 +8414,7 @@ function openClientBspImagesModal(rowId, spoolRowNumbers = [], spoolRowIds = [],
   const imgEl = modal.querySelector('#client-bsp-img');
   if (imgEl) imgEl.src = '';
   // Show loading placeholder and progress
-  tbody.innerHTML = '<tr><td colspan="2" class="client-bsp-images-placeholder">Carregando imagens…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="2" class="client-bsp-images-placeholder">Loading images…</td></tr>';
   progressContainer.hidden = false;
   progressBar.style.width = '0%';
   // Simple progress bar that animates up to 90% until the fetch completes
@@ -8447,6 +8447,10 @@ function openClientBspImagesModal(rowId, spoolRowNumbers = [], spoolRowIds = [],
     })
     .then((json) => {
       const images = Array.isArray(json?.images) ? json.images : [];
+      if (!images.length && json?.error) {
+        tbody.innerHTML = `<tr><td colspan="2" class="client-bsp-images-placeholder">${escapeHtml(String(json.error))}</td></tr>`;
+        return;
+      }
       tbody.innerHTML = '';
       // Guardar a lista de imagens no modal para navegação subsequente
       modal._bspImages = images;
@@ -8455,18 +8459,18 @@ function openClientBspImagesModal(rowId, spoolRowNumbers = [], spoolRowIds = [],
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td>${escapeHtml(String(img.name || ''))}</td>
-          <td><button type="button" class="client-bsp-image-view-link" data-attachment-id="${escapeHtml(String(img.id))}" data-attachment-name="${escapeHtml(String(img.name || 'Imagem'))}" data-sheet-id="${escapeHtml(String(img.sheetId || ''))}" data-image-index="${idx}">Ver</button></td>
+          <td><button type="button" class="client-bsp-image-view-link" data-attachment-id="${escapeHtml(String(img.id))}" data-attachment-name="${escapeHtml(String(img.name || 'Image'))}" data-sheet-id="${escapeHtml(String(img.sheetId || ''))}" data-image-index="${idx}">View</button></td>
         `;
         tbody.appendChild(tr);
       });
       if (!images.length) {
-        tbody.innerHTML = '<tr><td colspan="2" class="client-bsp-images-placeholder">Nenhuma imagem encontrada.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="2" class="client-bsp-images-placeholder">No image found.</td></tr>';
       }
       bindClientBspImageLinks();
     })
     .catch((err) => {
       console.error(err);
-      tbody.innerHTML = '<tr><td colspan="2" class="client-bsp-images-placeholder">Falha ao carregar imagens.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="2" class="client-bsp-images-placeholder">Failed to load images.</td></tr>';
     })
     .finally(() => {
       clearInterval(timer);
@@ -8489,7 +8493,7 @@ function bindClientBspImageLinks() {
     button.addEventListener('click', (ev) => {
       ev.preventDefault();
       const attId = button.getAttribute('data-attachment-id');
-      const name = button.getAttribute('data-attachment-name') || 'Imagem';
+      const name = button.getAttribute('data-attachment-name') || 'Image';
       const viewer = modal.querySelector('#client-bsp-img-viewer');
       const imgEl = modal.querySelector('#client-bsp-img');
       // Ao clicar em uma imagem, utilize o índice armazenado para abrir no viewer
@@ -8538,7 +8542,7 @@ function showClientBspImageAtIndex(index) {
     const baseUrl = `/api/client-under-dev-image?id=${encodeURIComponent(attId)}`;
     const proxyUrl = sheetId ? `${baseUrl}&sheetId=${encodeURIComponent(sheetId)}` : baseUrl;
     imgEl.src = directUrl || proxyUrl;
-    imgEl.alt = imgData.name || 'Imagem';
+    imgEl.alt = imgData.name || 'Image';
     if (viewer) viewer.classList.add('active');
   }
 }
@@ -8582,7 +8586,7 @@ function ensureClientBspUploadImageModalEl() {
           <p class="client-kicker">Smartsheet Tracking</p>
           <h2>Importar imagem da BSP</h2>
         </div>
-        <button type="button" class="client-bsp-upload-image-close" aria-label="Fechar">×</button>
+        <button type="button" class="client-bsp-upload-image-close" aria-label="Close">×</button>
       </div>
       <div class="client-bsp-upload-image-body">
         <p class="client-bsp-upload-image-note">Selecione uma ou mais imagens. O sistema comprime automaticamente antes de enviar para manter o painel leve.</p>

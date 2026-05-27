@@ -1,9 +1,10 @@
 (function () {
   'use strict';
 
-  const STORAGE_KEY = 'step-dashboard-language';
-  const DEFAULT_LANG = 'pt-BR';
-  const SUPPORTED_LANGS = ['pt-BR', 'en-US', 'es-ES'];
+  const STORAGE_KEY = 'step-dashboard-portugal-language';
+  const SOURCE_LANG = 'pt-BR';
+  const DEFAULT_LANG = 'en-US';
+  const SUPPORTED_LANGS = ['en-US', 'pt-BR', 'es-ES'];
   const LANGUAGE_LABELS = {
     'pt-BR': 'Português',
     'en-US': 'English',
@@ -373,6 +374,143 @@
       'Prévia e ajuste da logo do cliente': 'Client logo preview and adjustment',
       'URL da logo ou ./assets/client-logos/prio.png': 'Logo URL or ./assets/client-logos/prio.png',
       'Ex.: Projeto já enviado': 'Ex.: Project already shipped',
+      'STEP Gerência': 'STEP Management',
+      'Clique para abrir o total por cliente, unidade e BSP': 'Click to open total by client, unit and BSP',
+      'Clique para abrir os projetos iniciados por cliente': 'Click to open started projects by client',
+      'Clique para abrir os projetos não iniciados por cliente': 'Click to open not started projects by client',
+      'Clique para abrir os projetos em On Hold por cliente': 'Click to open projects on hold by client',
+      'Clique para abrir os projetos em produção por cliente': 'Click to open projects in production by client',
+      'Clique para abrir os projetos em qualidade por cliente': 'Click to open projects in quality by client',
+      'Clique para abrir os projetos em pintura por cliente': 'Click to open projects in painting by client',
+      'Clique para abrir os projetos preparados para envio por cliente': 'Click to open projects prepared for shipment by client',
+      'Clique para abrir o peso programado por cliente e BSP': 'Click to open planned weight by client and BSP',
+      'Clique para abrir o peso soldado por cliente e BSP': 'Click to open welded weight by client and BSP',
+      'Clique para abrir o peso pendente de solda por cliente e BSP': 'Click to open pending welding weight by client and BSP',
+      'Clique para abrir a área operacional por cliente e BSP': 'Click to open operational area by client and BSP',
+      'FORTE=cole aqui a URL/base64 da imagem&#10;FRADE=cole aqui a URL/base64 da imagem': 'FORTE=paste the image URL/base64 here&#10;FRADE=paste the image URL/base64 here',
+      'Buscar por título, mensagem, setor, usuário ou data': 'Search by title, message, sector, user or date',
+      'Clique em um cliente para visualizar as unidades/obras. Depois clique em uma unidade para listar as BSPs.': 'Click a client to view units/works. Then click a unit to list BSPs.',
+      'Este é o painel Portugal. Usuários criados aqui ficam sempre vinculados ao ambiente PT.': 'This is the Portugal dashboard. Users created here are always linked to the PT environment.',
+      'Quando marcado, o usuário poderá abrir a visão executiva do cliente nas BSPs. A edição de datas/informações continua restrita ao Admin ou ao PM vinculado.': 'When checked, the user can open the client executive view in BSPs. Date/information editing remains restricted to Admin or the linked PM.',
+      'Opcional. Você pode colar uma URL/caminho ou importar uma imagem local. Ao importar, ajuste a prévia e clique em “Aplicar ajuste”.': 'Optional. You can paste a URL/path or import a local image. When importing, adjust the preview and click “Apply adjustment”.',
+      'A prévia usa o mesmo formato do Portal do Cliente. Ajuste até preencher o quadro sem excesso de branco.': 'The preview uses the same format as the Client Portal. Adjust it until it fills the frame without excess white space.',
+      'Preencha uma imagem para cada Vessel/Unidade. O nome precisa ser igual ao nome que aparece no card.': 'Enter one image for each Vessel/Unit. The name must match the name shown on the card.',
+      'Selecione os nomes como aparecem na coluna PM do Tracking. A lista é montada automaticamente pelos projetos carregados.': 'Select the names as they appear in the Tracking PM column. The list is built automatically from loaded projects.',
+      'Se nada for marcado, o usuário de Qualidade mantém acesso a todas as competências. Marcando opções, ele verá somente as demandas correspondentes.': 'If nothing is checked, the Quality user keeps access to all competencies. When options are checked, they will see only the corresponding demands.',
+      'Nenhum alerta manual carregado.': 'No manual alert loaded.',
+      'Prévia da logo do cliente': 'Client logo preview',
+      'No iPhone/iPad, abra no Safari, toque em Compartilhar e depois em “Adicionar à Tela de Início”.': 'On iPhone/iPad, open in Safari, tap Share, then “Add to Home Screen”.',
+      'Falha ao registrar service worker.': 'Failed to register service worker.',
+      'Falha ao exibir notificação.': 'Failed to display notification.',
+      'Você recebeu um novo alerta operacional.': 'You received a new operational alert.',
+      'Abrir sinalização': 'Open flag',
+      'Prazo em alerta': 'Deadline alert',
+      'Abrir alertas': 'Open alerts',
+      'Abrir apontamentos': 'Open stage updates',
+      'Você recebeu um novo alerta.': 'You received a new alert.',
+      'Revisão de P.O': 'PO review',
+      'Revisão de PO': 'PO review',
+      'Revisão PO': 'PO review',
+      'Aguardando liberação para envio': 'Waiting for release for shipment',
+      'Aguardando liberacao para envio': 'Waiting for release for shipment',
+      'Aguardando liberação p/ envio': 'Waiting for release for shipment',
+      'Aguardando liberacao p envio': 'Waiting for release for shipment',
+      'Aguardando liberação envio': 'Waiting for release for shipment',
+      'Aguardando liberacao envio': 'Waiting for release for shipment',
+      'Sinalizações': 'Flags',
+      'Sinalizações do projeto': 'Project flags',
+      'Todos os projetos': 'All projects',
+      'Painel Individual da Obra': 'Work Individual Dashboard',
+      'Editar início/fim da ISO': 'Edit ISO start/finish',
+      'Início manual da ISO': 'Manual ISO start',
+      'Término manual da ISO': 'Manual ISO finish',
+      'Data de início da ISO': 'ISO start date',
+      'Data de término da ISO': 'ISO finish date',
+      'Salvar datas da ISO': 'Save ISO dates',
+      'Início desenho': 'Drawing start',
+      'Quantidade/Peso': 'Quantity/Weight',
+      'Revisão A': 'Revision A',
+      'Status da aprovação': 'Approval status',
+      'Approved / Finalizado': 'Approved / Completed',
+      'API de Drawing retornou resposta vazia. Status HTTP:': 'Drawing API returned an empty response. HTTP status:',
+      'API de Drawing retornou resposta não JSON. Status HTTP:': 'Drawing API returned a non-JSON response. HTTP status:',
+      'Próximos encontrados:': 'Closest matches found:',
+      'Detalhamento não encontrado.': 'Details not found.',
+      'Não foi possível carregar o detalhamento de Drawing para': 'Could not load Drawing details for',
+      'Nenhuma tag detalhada encontrada para esta BSP.': 'No detailed tag found for this BSP.',
+      'O navegador bloqueou a nova aba. Libere pop-ups para abrir o painel individual.': 'The browser blocked the new tab. Allow pop-ups to open the individual dashboard.',
+      'Fab. Início': 'Fab. Start',
+      'Data de Envio': 'Shipment Date',
+      'Início planejado': 'Planned start',
+      'Pré-fabricação | avanço inicial': 'Pre-fabrication | initial progress',
+      'Pré-fabricação | avanço intermediário': 'Pre-fabrication | intermediate progress',
+      'Não': 'No',
+      'Data Replanejada': 'Replanned Date',
+      'Extensão de prazo': 'Deadline extension',
+      'Hoje': 'Today',
+      'Atraso': 'Delay',
+      'Início do desvio': 'Deviation start',
+      'Pintura ainda não iniciada após avanço relevante da fabricação.': 'Painting has not started yet after relevant fabrication progress.',
+      'Término previsto': 'Expected finish',
+      'com progresso abaixo de 80%.': 'with progress below 80%.',
+      'Sem ponto crítico automático identificado neste momento.': 'No automatic critical point identified at this time.',
+      'Em andamento': 'In progress',
+      'Report não disponível para esta BSP.': 'Report not available for this BSP.',
+      'Falha ao salvar ajustes.': 'Failed to save adjustments.',
+      'Ajuste salvo, mas a API não retornou os dados atualizados. Atualize a tela para conferir.': 'Adjustment saved, but the API did not return updated data. Refresh the screen to check.',
+      'Falha ao remover ajuste.': 'Failed to remove adjustment.',
+      'A importação de imagem é restrita ao administrador e ao PM responsável pela BSP.': 'Image import is restricted to the administrator and the PM responsible for the BSP.',
+      'Carteira sem ponto crítico automático identificado neste momento.': 'Portfolio has no automatic critical point identified at this time.',
+      'Resumo BSPs': 'BSP summary',
+      'Unidade consolidada': 'Consolidated unit',
+      'Carteira consolidada': 'Consolidated portfolio',
+      'Escopo do relatório': 'Report scope',
+      'Timeline macro': 'Macro timeline',
+      'Resumo das etapas da unidade': 'Unit stage summary',
+      'Resumo das etapas da carteira': 'Portfolio stage summary',
+      'Editar datas / informações': 'Edit dates / information',
+      'Imagens': 'Images',
+      'Arquivo': 'File',
+      'Ação': 'Action',
+      'Selecione uma ou mais imagens. O sistema comprime automaticamente antes de enviar para manter o painel leve.': 'Select one or more images. The system automatically compresses them before upload to keep the dashboard light.',
+      'Integração': 'Integration',
+      'Nome da integração': 'Integration name',
+      'Smartsheet Tracking': 'Smartsheet Tracking',
+      'Exportado em': 'Exported at',
+      'Baixar o detalhamento': 'Download the details',
+      'Urgência': 'Urgency',
+      'Sinalização': 'Flag',
+      'Marcar como resolvida': 'Mark as resolved',
+      'Competências da Qualidade': 'Quality competencies',
+      'Último login': 'Last login',
+      'Última visualização': 'Last view',
+      'Limpar rascunhos': 'Clear drafts',
+      'Corrigir selecionadas': 'Fix selected',
+      'Apontamentos da etapa': 'Stage updates',
+      'Pendências não processadas': 'Unprocessed pending items',
+      'Observação opcional': 'Optional note',
+      'Parâmetro projectId ausente.': 'Missing projectId parameter.',
+      'Erro ao carregar imagens': 'Error loading images',
+      'Falha ao carregar as imagens.': 'Failed to load images.',
+      'Ver imagem': 'View image',
+      'Imagem': 'Image',
+      'Carregando dados…': 'Loading data…',
+      'Carregando dados...': 'Loading data...',
+      'Nenhum projeto em desenvolvimento foi encontrado.': 'No project under development was found.',
+      'Falha ao carregar os dados.': 'Failed to load data.',
+      'Erro ao carregar dados': 'Error loading data',
+      'Abra /api/client-under-dev?debug=1 para ver o mapeamento das colunas retornado pela API.': 'Open /api/client-under-dev?debug=1 to see the column mapping returned by the API.',
+      'Buscar Vessel, Work Order, ID Repair, Tag Number, SOB, Description ou Status': 'Search Vessel, Work Order, ID Repair, Tag Number, SOB, Description or Status',
+      'Projetos em Desenvolvimento – Yinson': 'Projects Under Development – Yinson',
+      'Buscar': 'Search',
+      'IMAGEM': 'IMAGE',
+      'Você recebeu uma nova notificação.': 'You received a new notification.',
+      'Você recebeu uma nova notificação': 'You received a new notification',
+      'Método não permitido.': 'Method not allowed.',
+      'Falha ao sincronizar cache.': 'Failed to sync cache.',
+      'BSP não encontrada no escopo do usuário.': 'BSP not found in the user scope.',
+      'Uma nova sinalização foi enviada para validação.': 'A new flag was sent for validation.',
+      'Um novo apontamento foi enviado e aguarda validação do PCP.': 'A new stage update was sent and is awaiting PCP validation.',
 
       'Portal do Cliente': 'Client Portal',
       'Demandas filtradas por empresa': 'Items filtered by company',
@@ -984,7 +1122,7 @@
   }
 
   function interpolateDynamic(text, lang) {
-    if (lang === DEFAULT_LANG) return text;
+    if (lang === SOURCE_LANG) return text;
     const normalized = normalizeText(text);
     const en = lang === 'en-US';
 
@@ -1090,7 +1228,7 @@
   function translateText(originalText, lang = currentLang) {
     const original = String(originalText ?? '');
     const normalized = normalizeText(original);
-    if (!normalized || lang === DEFAULT_LANG) return original;
+    if (!normalized || lang === SOURCE_LANG) return original;
     if (looksLikeOperationalCode(normalized)) return original;
     const dictionary = DICT[lang] || {};
     if (Object.prototype.hasOwnProperty.call(dictionary, normalized)) {
@@ -1127,7 +1265,7 @@
     const knownSource = textNodeSources.get(node);
     const source = knownSource || raw;
     if (!knownSource) textNodeSources.set(node, source);
-    const nextValue = currentLang === DEFAULT_LANG ? source : translateText(source, currentLang);
+    const nextValue = currentLang === SOURCE_LANG ? source : translateText(source, currentLang);
     if (node.nodeValue !== nextValue) node.nodeValue = nextValue;
   }
 
@@ -1150,7 +1288,7 @@
       if (!normalizeText(current)) return;
       if (!sourceMap[attr]) sourceMap[attr] = current;
       const source = sourceMap[attr];
-      const nextValue = currentLang === DEFAULT_LANG ? source : translateText(source, currentLang);
+      const nextValue = currentLang === SOURCE_LANG ? source : translateText(source, currentLang);
       if (current !== nextValue) el.setAttribute(attr, nextValue);
     });
   }
@@ -1198,7 +1336,7 @@
     isApplying = true;
     try {
       document.documentElement.lang = currentLang;
-      document.title = currentLang === DEFAULT_LANG ? 'STEP • Painel Operacional' : translateText('STEP • Painel Operacional', currentLang);
+      document.title = currentLang === SOURCE_LANG ? 'STEP • Painel Operacional' : translateText('STEP • Painel Operacional', currentLang);
       walkAndTranslate(root);
       syncSwitcher();
     } finally {
@@ -1216,7 +1354,7 @@
     isApplying = true;
     try {
       document.documentElement.lang = currentLang;
-      document.title = currentLang === DEFAULT_LANG ? 'STEP • Painel Operacional' : translateText('STEP • Painel Operacional', currentLang);
+      document.title = currentLang === SOURCE_LANG ? 'STEP • Painel Operacional' : translateText('STEP • Painel Operacional', currentLang);
       filtered.forEach((root) => walkAndTranslate(root));
       syncSwitcher();
     } finally {
@@ -1255,7 +1393,7 @@
   function initObserver() {
     if (observer) observer.disconnect();
     observer = new MutationObserver((mutations) => {
-      if (isApplying || currentLang === DEFAULT_LANG) return;
+      if (isApplying || currentLang === SOURCE_LANG) return;
       for (const mutation of mutations) {
         if (mutation.type === 'characterData') {
           textNodeSources.delete(mutation.target);
@@ -1282,7 +1420,23 @@
     });
   }
 
+
+  let nativeDialogsPatched = false;
+  function patchNativeDialogs() {
+    if (nativeDialogsPatched) return;
+    nativeDialogsPatched = true;
+    const nativeAlert = window.alert?.bind(window);
+    const nativeConfirm = window.confirm?.bind(window);
+    if (nativeAlert) {
+      window.alert = (message) => nativeAlert(translateText(String(message ?? ''), currentLang));
+    }
+    if (nativeConfirm) {
+      window.confirm = (message) => nativeConfirm(translateText(String(message ?? ''), currentLang));
+    }
+  }
+
   function init() {
+    patchNativeDialogs();
     saveLanguage(currentLang);
     createSwitcher();
     applyTranslations(document.body);

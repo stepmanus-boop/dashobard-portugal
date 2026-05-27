@@ -1,4 +1,4 @@
-const CACHE_NAME = 'step-dashboard-portugal-v38.9-melhorias-brasil-v3705';
+const CACHE_NAME = 'step-dashboard-portugal-38.11-corrige-imagens-bsp';
 // - v37.02: revisa performance, otimiza i18n dinâmico/Yinson e preserva apontamentos rápidos
 // Versão v28: preserva cache local entre logouts e usa caminho rápido pós-login
 // - Mantém assets do app shell versionados para liberar app.js corrigido imediatamente
@@ -99,7 +99,7 @@ self.addEventListener("fetch", (event) => {
   if (url && url.origin === self.location.origin && url.pathname.startsWith("/api/")) {
     event.respondWith(
       fetch(request, { cache: "no-store" }).catch(() =>
-        new Response(JSON.stringify({ ok: false, offline: true, error: "Sem conexão no momento." }), {
+        new Response(JSON.stringify({ ok: false, offline: true, error: "No connection at the moment." }), {
           headers: { "Content-Type": "application/json" },
         })
       )
@@ -137,7 +137,7 @@ self.addEventListener("push", (event) => {
   try { data = event.data ? event.data.json() : {}; } catch (_) {}
   const title = data.title || 'Novo alerta';
   const options = {
-    body: data.body || 'Você recebeu uma nova notificação.',
+    body: data.body || 'You received a new notification.',
     icon: '/assets/icon-192.png',
     badge: '/assets/icon-192.png',
     tag: data.tag || 'step-alert',
@@ -162,3 +162,5 @@ self.addEventListener("notificationclick", (event) => {
     if (clients.openWindow) return clients.openWindow(targetUrl);
   }));
 });
+
+// v38.10 Portugal: English is the default language and standalone client pages were translated.

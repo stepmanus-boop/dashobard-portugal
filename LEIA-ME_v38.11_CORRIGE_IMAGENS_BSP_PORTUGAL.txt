@@ -1,0 +1,52 @@
+PAINEL PORTUGAL – v38.11
+
+Correção aplicada:
+- Corrigido o mesmo ponto que havia afetado o Brasil no modal de imagens da BSP.
+
+Arquivos ajustados:
+- netlify/functions/client-bsp-images.js
+- netlify/functions/client-bsp-upload-image.js
+- netlify/functions/client-under-dev-image.js
+- site/app.js
+- site/sw.js
+
+Melhorias:
+1. As APIs de imagem agora aceitam variáveis específicas de Portugal:
+   - SMARTSHEET_API_KEY_PT
+   - SMARTSHEET_TOKEN_PT
+   - SMARTSHEET_ACCESS_TOKEN_PT
+   - SMARTSHEET_API_TOKEN_PT
+   - SMARTSHEET_BEARER_TOKEN_PT
+   - SMARTSHEET_PAT_PT
+   - SMARTSHEET_PERSONAL_ACCESS_TOKEN_PT
+
+2. Também mantêm compatibilidade com variáveis genéricas:
+   - SMARTSHEET_API_KEY
+   - SMARTSHEET_TOKEN
+   - SMARTSHEET_ACCESS_TOKEN
+   - SMARTSHEET_API_TOKEN
+   - SMARTSHEET_BEARER_TOKEN
+   - SMARTSHEET_PAT
+   - SMARTSHEET_PERSONAL_ACCESS_TOKEN
+
+3. A leitura das imagens da BSP respeita a sheet de Portugal:
+   - SMARTSHEET_TRACKING_SHEET_ID_PT
+   - SMARTSHEET_SHEET_ID_PT
+
+4. A tela passa a mostrar a mensagem real da API quando não conseguir listar imagens.
+
+5. Mantida a correção de visualização via proxy /api/client-under-dev-image para imagens temporárias do Smartsheet.
+
+6. Labels principais do modal de imagens foram mantidos em inglês para o painel Portugal.
+
+Cache/PWA:
+- step-dashboard-portugal-38.11-corrige-imagens-bsp
+- sw.js?v=43
+
+Validações locais:
+- node --check site/app.js
+- node --check site/sw.js
+- node --check netlify/functions/client-bsp-images.js
+- node --check netlify/functions/client-bsp-upload-image.js
+- node --check netlify/functions/client-under-dev-image.js
+- npm run lint

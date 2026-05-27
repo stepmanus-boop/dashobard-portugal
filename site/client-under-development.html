@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="en-US">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Projetos em Desenvolvimento – Yinson</title>
-    <!-- Usa a folha de estilos principal para manter o visual consistente -->
+    <title>Projects Under Development – Yinson</title>
+    <!-- Uses the main stylesheet to keep the visual consistent -->
     <link rel="stylesheet" href="./app.css" />
     <style>
       body {
@@ -19,7 +19,7 @@
         font-size: 1.5rem;
         color: #7bd5ff;
       }
-      /* Barra de progresso */
+      /* Progress bar */
       .progress-container {
         width: 100%;
         height: 4px;
@@ -67,14 +67,14 @@
         text-decoration: underline;
         cursor: pointer;
       }
-      /* Estilos para o campo de busca */
+      /* Search field styles */
       .search-container {
         margin-bottom: 16px;
         display: flex;
         gap: 8px;
       }
 
-      /* Modal para visualizar imagens */
+      /* Image preview modal */
       .modal {
         position: fixed;
         top: 0;
@@ -144,11 +144,11 @@
     </style>
   </head>
   <body>
-    <h1>Projetos em Desenvolvimento – Yinson</h1>
-    <!-- Campo de busca para Vessel, Work Order, ID Repair, Tag Number ou SOB -->
+    <h1>Projects Under Development – Yinson</h1>
+    <!-- Search field for Vessel, Work Order, ID Repair, Tag Number, SOB, Description or Status -->
     <div class="search-container">
-      <input type="text" id="search-input" placeholder="Buscar Vessel, Work Order, ID Repair, Tag Number, SOB, Description ou Status" />
-      <button id="search-button" type="button">Buscar</button>
+      <input type="text" id="search-input" placeholder="Search Vessel, Work Order, ID Repair, Tag Number, SOB, Description or Status" />
+      <button id="search-button" type="button">Search</button>
     </div>
     <div class="progress-container" id="progress-container" hidden>
       <div class="progress-bar" id="progress-bar"></div>
@@ -163,24 +163,24 @@
           <th>SOB</th>
           <th>DESCRIPTION</th>
           <th>STATUS</th>
-          <th>IMAGEM</th>
+          <th>IMAGE</th>
         </tr>
       </thead>
       <tbody id="projects-body">
-        <tr><td colspan="8" class="placeholder">Carregando dados…</td></tr>
+        <tr><td colspan="8" class="placeholder">Loading data…</td></tr>
       </tbody>
     </table>
 
-    <!-- Modal de visualização de imagens -->
+    <!-- Image preview modal -->
     <div id="image-modal" class="modal">
       <div class="modal-content">
         <span class="modal-close" id="modal-close">&times;</span>
-        <img id="modal-img" src="" alt="Imagem" />
+        <img id="modal-img" src="" alt="Image" />
       </div>
     </div>
 
     <script>
-      // Função para mostrar uma barra de progresso simples enquanto os dados são carregados
+      // Function to show a simple progress bar while data is loading
       function startProgressBar() {
         const container = document.getElementById('progress-container');
         const bar = document.getElementById('progress-bar');
@@ -198,7 +198,7 @@
         };
       }
 
-      // Variáveis globais para armazenar os projetos carregados
+      // Global variables to store loaded projects
       let allProjects = [];
 
       function escapeHtml(value) {
@@ -211,7 +211,7 @@
         }[char]));
       }
 
-      // Renderiza a lista de projetos no corpo da tabela
+      // Renders the project list in the table body
       function renderProjects(list) {
         const tbody = document.getElementById('projects-body');
         tbody.innerHTML = '';
@@ -220,14 +220,14 @@
           let imageLinks = '';
           if (proj.images && proj.images.length) {
             imageLinks = proj.images.map((img, idx) => {
-              const label = (proj.images.length > 1) ? `Ver ${idx + 1}` : 'Ver imagem';
-              // Inclui classes extras para capturar o clique e abre em modal. Não
-              // define target para impedir abertura em nova guia.
+              const label = (proj.images.length > 1) ? `View ${idx + 1}` : 'View image';
+              // Adds extra classes to capture the click and open in a modal. It does not
+              // set target to prevent opening a new tab.
               const safeId = encodeURIComponent(String(img.id || ''));
               const safeSheetId = encodeURIComponent(String(img.sheetId || ''));
               const directUrl = String(img.url || '');
               const href = directUrl || (safeSheetId ? `/api/client-under-dev-image?id=${safeId}&sheetId=${safeSheetId}` : `/api/client-under-dev-image?id=${safeId}`);
-              return `<a href="${escapeHtml(href)}" class="view-link image-link" data-img-name="${escapeHtml(img.name || 'Imagem')}">${escapeHtml(label)}</a>`;
+              return `<a href="${escapeHtml(href)}" class="view-link image-link" data-img-name="${escapeHtml(img.name || 'Image')}">${escapeHtml(label)}</a>`;
             }).join(', ');
           }
           tr.innerHTML = `
@@ -243,22 +243,22 @@
           tbody.appendChild(tr);
         });
         if (!list.length) {
-          tbody.innerHTML = '<tr><td colspan="8" class="placeholder">Nenhum projeto em desenvolvimento foi encontrado.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="8" class="placeholder">No project under development was found.</td></tr>';
         }
-        // Após renderizar a tabela, vincule os eventos de clique às imagens.
+        // After rendering the table, bind click events to images.
         bindImageLinkEvents();
       }
 
-      // Carrega projetos a partir do endpoint Netlify /api/client-under-dev
+      // Loads projects from the Netlify endpoint /api/client-under-dev
       async function loadProjectsFromApi() {
         const tbody = document.getElementById('projects-body');
-        tbody.innerHTML = '<tr><td colspan="8" class="placeholder">Carregando dados...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="placeholder">Loading data...</td></tr>';
         const stopProgress = startProgressBar();
         try {
           const res = await fetch('/api/client-under-dev', { cache: 'no-store' });
           const json = await res.json().catch(() => null);
           if (!res.ok || !json || json.ok === false) {
-            const detail = json?.error || json?.details?.message || 'Erro ao carregar dados';
+            const detail = json?.error || json?.details?.message || 'Error loading data';
             throw new Error(detail);
           }
           if (json.meta) console.info('[Yinson Under Dev] Mapeamento Smartsheet:', json.meta);
@@ -267,14 +267,14 @@
           renderProjects(projects);
         } catch (err) {
           console.error(err);
-          const message = escapeHtml(err?.message || 'Falha ao carregar os dados.');
-          tbody.innerHTML = `<tr><td colspan="8" class="placeholder">Falha ao carregar os dados.<br><small>${message}</small><br><small>Abra /api/client-under-dev?debug=1 para ver o mapeamento das colunas retornado pela API.</small></td></tr>`;
+          const message = escapeHtml(err?.message || 'Failed to load data.');
+          tbody.innerHTML = `<tr><td colspan="8" class="placeholder">Failed to load data.<br><small>${message}</small><br><small>Open /api/client-under-dev?debug=1 to see the column mapping returned by the API.</small></td></tr>`;
         } finally {
           stopProgress();
         }
       }
 
-      // Filtra os projetos com base no termo de busca (Vessel, Work Order, ID Repair, Tag Number, SOB, Description ou Status)
+      // Filters projects by search term (Vessel, Work Order, ID Repair, Tag Number, SOB, Description or Status)
       function searchProjects() {
         const inputEl = document.getElementById('search-input');
         const term = (inputEl.value || '').trim().toLowerCase();
@@ -297,7 +297,7 @@
         renderProjects(filtered);
       }
 
-      // Associa os eventos de busca após o carregamento do DOM
+      // Binds search events after DOM loading
       document.addEventListener('DOMContentLoaded', () => {
         const searchBtn = document.getElementById('search-button');
         const searchInput = document.getElementById('search-input');
@@ -312,26 +312,24 @@
         }
       });
 
-      // Função para associar handlers de clique nos links de imagem. Quando
-      // clicado, abre a imagem em um modal para visualização ao invés de
-      // iniciar um download ou abrir nova guia.
+      // Function to bind click handlers to image links. When clicked, it opens
+      // the image in a preview modal instead of starting a download or opening a new tab.
       function bindImageLinkEvents() {
-        // Seleciona todos os links de imagem criados dinamicamente.
+        // Selects all dynamically created image links.
         const links = document.querySelectorAll('.image-link');
         links.forEach((link) => {
           link.addEventListener('click', (ev) => {
             ev.preventDefault();
             ev.stopPropagation();
             const href = link.getAttribute('href');
-            const name = link.dataset.imgName || 'Imagem';
+            const name = link.dataset.imgName || 'Image';
             showImageModal(href, name);
           });
         });
       }
 
-      // Exibe a imagem em um modal. Usa o href para carregar a imagem via
-      // proxy interno (que redireciona para a URL temporária). Define o
-      // atributo alt com o nome do arquivo para acessibilidade.
+      // Shows the image in a modal. Uses href to load the image through the internal
+      // proxy, which redirects to the temporary URL. Sets alt with the file name for accessibility.
       function showImageModal(src, name) {
         const modal = document.getElementById('image-modal');
         const imgEl = document.getElementById('modal-img');
@@ -340,7 +338,7 @@
         imgEl.src = src;
         imgEl.alt = name;
         modal.classList.add('active');
-        // Ajusta overflow do corpo para evitar rolagem de fundo
+        // Adjusts body overflow to prevent background scrolling
         document.body.style.overflow = 'hidden';
         const closeHandler = () => {
           modal.classList.remove('active');
@@ -358,10 +356,9 @@
         modal.addEventListener('click', outsideHandler);
       }
 
-      // Os links de imagens usam a tag <a> com target="_blank", então o navegador abre
-      // a imagem em nova guia automaticamente. Nenhum manipulador de clique é necessário.
+      // Image links use <a>. No additional click handler is required outside the modal flow.
 
-      // Carrega os dados automaticamente quando a página abre
+      // Automatically loads data when the page opens
       document.addEventListener('DOMContentLoaded', () => {
         loadProjectsFromApi();
       });

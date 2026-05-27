@@ -7,6 +7,35 @@
 
 const DEFAULT_TRACKING_SHEET_ID = process.env.SMARTSHEET_TRACKING_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_TRACKING_SHEET_ID || process.env.SMARTSHEET_SHEET_ID || '';
 
+function getSmartsheetToken() {
+  return process.env.SMARTSHEET_API_KEY_PT
+    || process.env.SMARTSHEET_TOKEN_PT
+    || process.env.SMARTSHEET_ACCESS_TOKEN_PT
+    || process.env.SMARTSHEET_API_TOKEN_PT
+    || process.env.SMARTSHEET_BEARER_TOKEN_PT
+    || process.env.SMARTSHEET_PAT_PT
+    || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN_PT
+    || process.env.SMARTSHEET_API_KEY
+    || process.env.SMARTSHEET_TOKEN
+    || process.env.SMARTSHEET_ACCESS_TOKEN
+    || process.env.SMARTSHEET_API_TOKEN
+    || process.env.SMARTSHEET_BEARER_TOKEN
+    || process.env.SMARTSHEET_PAT
+    || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN
+    || '';
+}
+
+function getTrackingSheetId(query = {}) {
+  return String(
+    query.sheetId
+      || process.env.SMARTSHEET_TRACKING_SHEET_ID_PT
+      || process.env.SMARTSHEET_SHEET_ID_PT
+      || process.env.SMARTSHEET_TRACKING_SHEET_ID
+      || process.env.SMARTSHEET_SHEET_ID
+      || DEFAULT_TRACKING_SHEET_ID
+  ).trim() || DEFAULT_TRACKING_SHEET_ID;
+}
+
 function splitIds(value) {
   if (!value) return [];
   return String(value)
@@ -42,12 +71,15 @@ async function fetchJson(url, options) {
 }
 
 exports.handler = async (event) => {
-  const API_KEY = process.env.SMARTSHEET_API_KEY || process.env.SMARTSHEET_TOKEN || process.env.SMARTSHEET_ACCESS_TOKEN || process.env.SMARTSHEET_API_TOKEN || process.env.SMARTSHEET_BEARER_TOKEN || process.env.SMARTSHEET_PAT || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN || '';
+  const API_KEY = getSmartsheetToken();
   if (!API_KEY) {
     return {
-      statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ images: [], error: 'SMARTSHEET_API_KEY not configured' }),
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      body: JSON.stringify({
+        images: [],
+        error: 'Smartsheet token not configured. Configure SMARTSHEET_API_KEY_PT, SMARTSHEET_TOKEN_PT, SMARTSHEET_API_KEY or SMARTSHEET_TOKEN in Netlify.',
+      }),
     };
   }
   const headers = { Authorization: `Bearer ${API_KEY}` };
@@ -55,12 +87,12 @@ exports.handler = async (event) => {
 
   // Executive BSP images must be searched in the Tracking sheet only.
   // A sheetId query parameter is still accepted for controlled tests, but the frontend sends a sheet configurada do Tracking PT.
-  const sheetId = String(query.sheetId || DEFAULT_TRACKING_SHEET_ID).trim() || DEFAULT_TRACKING_SHEET_ID;
+  const sheetId = getTrackingSheetId(query);
   if (!sheetId) {
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ images: [], error: 'Tracking sheet not configured. Configure SMARTSHEET_SHEET_ID_PT or SMARTSHEET_TRACKING_SHEET_ID_PT.' }),
+      body: JSON.stringify({ images: [], error: 'Portugal Tracking sheet not configured. Configure SMARTSHEET_TRACKING_SHEET_ID_PT or SMARTSHEET_SHEET_ID_PT in Netlify.' }),
     };
   }
 

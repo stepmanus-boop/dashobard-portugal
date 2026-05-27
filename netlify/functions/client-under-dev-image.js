@@ -6,7 +6,14 @@ const API_BASE = process.env.SMARTSHEET_API_BASE || 'https://api.smartsheet.com/
 const REQUEST_TIMEOUT_MS = Number(process.env.SMARTSHEET_REQUEST_TIMEOUT_MS || process.env.SMARTSHEET_FETCH_TIMEOUT_MS || 20000);
 
 function getToken() {
-  return process.env.SMARTSHEET_API_KEY
+  return process.env.SMARTSHEET_API_KEY_PT
+    || process.env.SMARTSHEET_TOKEN_PT
+    || process.env.SMARTSHEET_ACCESS_TOKEN_PT
+    || process.env.SMARTSHEET_API_TOKEN_PT
+    || process.env.SMARTSHEET_BEARER_TOKEN_PT
+    || process.env.SMARTSHEET_PAT_PT
+    || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN_PT
+    || process.env.SMARTSHEET_API_KEY
     || process.env.SMARTSHEET_TOKEN
     || process.env.SMARTSHEET_ACCESS_TOKEN
     || process.env.SMARTSHEET_API_TOKEN
@@ -92,7 +99,7 @@ async function getRowImageAttachment(headers, rowId, sheetIds, imageIndex) {
 exports.handler = async (event) => {
   const API_KEY = getToken();
   if (!API_KEY) {
-    return { statusCode: 500, body: 'Token Smartsheet não configurado. Configure SMARTSHEET_API_KEY ou SMARTSHEET_TOKEN no Netlify.' };
+    return { statusCode: 500, body: 'Smartsheet token not configured. Configure SMARTSHEET_API_KEY_PT, SMARTSHEET_TOKEN_PT, SMARTSHEET_API_KEY or SMARTSHEET_TOKEN in Netlify.' };
   }
 
   const qs = event.queryStringParameters || {};

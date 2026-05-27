@@ -9,6 +9,36 @@ const { isSupabaseConfigured, getUserById } = require('./_supabase');
 const { loadProjectPayload } = require('./_projectLookup');
 
 const DEFAULT_TRACKING_SHEET_ID = process.env.SMARTSHEET_TRACKING_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_TRACKING_SHEET_ID || process.env.SMARTSHEET_SHEET_ID || '';
+
+function getSmartsheetToken() {
+  return process.env.SMARTSHEET_API_KEY_PT
+    || process.env.SMARTSHEET_TOKEN_PT
+    || process.env.SMARTSHEET_ACCESS_TOKEN_PT
+    || process.env.SMARTSHEET_API_TOKEN_PT
+    || process.env.SMARTSHEET_BEARER_TOKEN_PT
+    || process.env.SMARTSHEET_PAT_PT
+    || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN_PT
+    || process.env.SMARTSHEET_API_KEY
+    || process.env.SMARTSHEET_TOKEN
+    || process.env.SMARTSHEET_ACCESS_TOKEN
+    || process.env.SMARTSHEET_API_TOKEN
+    || process.env.SMARTSHEET_BEARER_TOKEN
+    || process.env.SMARTSHEET_PAT
+    || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN
+    || '';
+}
+
+function getTrackingSheetId(payload = {}) {
+  return String(
+    payload.sheetId
+      || process.env.SMARTSHEET_TRACKING_SHEET_ID_PT
+      || process.env.SMARTSHEET_SHEET_ID_PT
+      || process.env.SMARTSHEET_TRACKING_SHEET_ID
+      || process.env.SMARTSHEET_SHEET_ID
+      || DEFAULT_TRACKING_SHEET_ID
+  ).trim() || DEFAULT_TRACKING_SHEET_ID;
+}
+
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // keep payload safe for Netlify/browser flow
 
 function json(statusCode, payload) {
@@ -107,9 +137,9 @@ exports.handler = async (event) => {
   if (!auth.ok) return auth.response;
   const user = await hydrateSessionUser(auth.session);
 
-  const API_KEY = process.env.SMARTSHEET_API_KEY || process.env.SMARTSHEET_TOKEN || process.env.SMARTSHEET_ACCESS_TOKEN || process.env.SMARTSHEET_API_TOKEN || process.env.SMARTSHEET_BEARER_TOKEN || process.env.SMARTSHEET_PAT || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN || '';
+  const API_KEY = getSmartsheetToken();
   if (!API_KEY) {
-    return json(500, { ok: false, error: 'SMARTSHEET_API_KEY não configurada no Netlify.' });
+    return json(500, { ok: false, error: 'Smartsheet token not configured. Configure SMARTSHEET_API_KEY_PT, SMARTSHEET_TOKEN_PT, SMARTSHEET_API_KEY or SMARTSHEET_TOKEN in Netlify.' });
   }
 
   let payload;
@@ -120,7 +150,7 @@ exports.handler = async (event) => {
   }
 
   const rowId = String(payload.rowId || '').trim();
-  const sheetId = String(payload.sheetId || process.env.SMARTSHEET_TRACKING_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_TRACKING_SHEET_ID || process.env.SMARTSHEET_SHEET_ID || DEFAULT_TRACKING_SHEET_ID).trim();
+  const sheetId = getTrackingSheetId(payload);
   const mimeType = String(payload.mimeType || 'image/jpeg').trim().toLowerCase();
   const fileName = sanitizeFileName(payload.fileName);
   const base64 = normalizeBase64(payload.base64);
