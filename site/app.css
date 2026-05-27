@@ -27,6 +27,20 @@ body {
 }
 
 body.modal-open { overflow: hidden; }
+/* v36.85: segurança visual no boot. Enquanto a sessão não é confirmada,
+   o usuário vê somente o login, sem o painel piscando/carregando atrás. */
+body.auth-locked .page-shell {
+  visibility: hidden;
+  pointer-events: none;
+}
+body.auth-locked #login-modal {
+  visibility: visible;
+  pointer-events: auto;
+}
+body.auth-locked #login-progress-overlay {
+  visibility: visible;
+}
+
 
 .page-shell {
   height: auto;
@@ -4373,23 +4387,25 @@ button.alert-badge {
   height: 112px;
   border-radius: 18px;
   display: grid;
-  place-items: center;
-  background: rgba(255,255,255,0.08);
+  place-items: stretch;
+  background: transparent;
   border: 1px solid rgba(255,255,255,0.12);
   overflow: hidden;
+  padding: 0;
 }
 .client-logo-box img {
   width: 100%;
   height: 100%;
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+  max-width: none;
+  max-height: none;
+  object-fit: cover;
   object-position: center;
-  padding: 6px;
+  padding: 0;
   box-sizing: border-box;
   display: block;
-  background: rgba(255,255,255,.96);
-  border-radius: 14px;
+  background: transparent;
+  border-radius: 0;
+  transform: scale(1.025);
 }
 .client-kicker { margin: 0 0 4px; color: #64c2ff; font-size: .78rem; text-transform: uppercase; letter-spacing: .12em; font-weight: 800; }
 .client-hero h2, .client-section-head h3, .client-detail-head h3 { margin: 0; color: #f6fbff; }
@@ -8221,4 +8237,524 @@ body.client-mode .client-logo-box img,
 
 .client-spool-row--clickable:hover {
   box-shadow: inset 4px 0 0 rgba(0, 138, 117, .72);
+}
+
+/* ===== v36.68 - Logo do Portal do Cliente preenchendo 100% do card =====
+   Remove o fundo/padding branco herdado das versões anteriores e força a imagem
+   a preencher todo o quadro. O leve scale elimina bordas internas de imagens
+   exportadas com respiro branco. */
+body.client-mode .client-logo-box,
+.client-logo-box {
+  width: 224px !important;
+  height: 124px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  background: transparent !important;
+  border: 1px solid rgba(104, 198, 255, 0.34) !important;
+  border-radius: 18px !important;
+  overflow: hidden !important;
+  display: block !important;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, .16) !important;
+}
+
+body.client-mode .client-logo-box img,
+.client-logo-box img,
+#client-dashboard-logo {
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 100% !important;
+  min-height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 18px !important;
+  background: transparent !important;
+  object-fit: cover !important;
+  object-position: center center !important;
+  display: block !important;
+  aspect-ratio: auto !important;
+  transform: scale(1.08) !important;
+  transform-origin: center center !important;
+}
+
+@media (max-width: 760px) {
+  body.client-mode .client-logo-box,
+  .client-logo-box {
+    width: 180px !important;
+    height: 100px !important;
+  }
+}
+
+
+/* v36.69 - Permissão visual do Painel do Cliente no cadastro de usuários */
+.check-row--feature {
+  border: 1px solid rgba(0, 204, 255, 0.24);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(0, 204, 255, 0.06);
+  font-weight: 800;
+}
+.check-row--feature input {
+  transform: scale(1.08);
+}
+
+
+/* v36.70 - Portal do Cliente: botão discreto para buscar BSPs novas no Smartsheet */
+.client-refresh-button {
+  min-width: auto;
+  padding: 5px 9px;
+  font-size: 9px;
+  letter-spacing: .06em;
+  opacity: .78;
+  background: rgba(0, 210, 255, 0.055);
+  border-color: rgba(0, 210, 255, 0.24);
+}
+.client-refresh-button:hover,
+.client-refresh-button:focus-visible {
+  opacity: 1;
+  background: rgba(0, 210, 255, 0.14);
+  border-color: rgba(0, 210, 255, 0.42);
+}
+.client-refresh-button.is-loading {
+  opacity: .9;
+  cursor: wait;
+}
+
+/* v36.86 - Correção de contraste do aviso EM TRATATIVA no Painel do Cliente
+   Antes o bloco usava texto claro sobre fundo claro, deixando a informação quase invisível.
+   Agora o card mantém o visual executivo, mas com contraste alto e leitura imediata. */
+.client-observation-notice--tratativa {
+  position: relative !important;
+  overflow: hidden !important;
+  border: 2px solid #2563eb !important;
+  background: linear-gradient(135deg, #e0f2fe 0%, #dbeafe 48%, #bfdbfe 100%) !important;
+  color: #082f49 !important;
+  box-shadow: 0 16px 36px rgba(37, 99, 235, .18) !important;
+}
+
+.client-observation-notice--tratativa::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 7px;
+  background: linear-gradient(180deg, #0ea5e9, #2563eb);
+}
+
+.client-observation-notice--tratativa > div {
+  align-items: center !important;
+  flex-wrap: wrap !important;
+}
+
+.client-observation-notice--tratativa span {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+  border: 1px solid rgba(30, 64, 175, .55) !important;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, .25) !important;
+  text-shadow: none !important;
+}
+
+.client-observation-notice--tratativa strong {
+  color: #082f49 !important;
+  font-weight: 950 !important;
+  text-shadow: none !important;
+}
+
+.client-observation-notice--tratativa ul {
+  margin-top: 10px !important;
+}
+
+.client-observation-notice--tratativa li,
+.client-observation-notice--tratativa p {
+  color: #082f49 !important;
+  font-weight: 800 !important;
+  text-shadow: none !important;
+}
+
+.client-observation-notice--tratativa li strong {
+  color: #7f1d1d !important;
+  font-weight: 950 !important;
+}
+
+
+/* ===== v36.87 - Ajuste visual Tag/ISO e Etapa no Portal do Cliente ===== */
+.client-project-detail .client-bsp-table thead th:first-child,
+.client-project-detail .client-bsp-table thead th:nth-child(5),
+.client-exec-process-detail .client-bsp-table thead th:first-child,
+.client-exec-process-detail .client-bsp-table thead th:nth-child(5) {
+  background: rgba(220, 238, 249, .95) !important;
+  color: #0b3761 !important;
+}
+
+.client-project-detail .client-bsp-table td:first-child,
+.client-project-detail .client-bsp-table td:nth-child(5),
+.client-exec-process-detail .client-bsp-table td:first-child,
+.client-exec-process-detail .client-bsp-table td:nth-child(5) {
+  color: inherit !important;
+}
+
+/*
+ * Modal para exibir anexos de imagem de uma BSP. O modal cobre a tela
+ * inteira com uma camada semitransparente e centraliza um diálogo com
+ * cabeçalho, barra de progresso, tabela de arquivos e um viewer de imagem.
+ */
+.client-bsp-images-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 9999;
+}
+.client-bsp-images-modal.active {
+  display: flex;
+}
+.client-bsp-images-dialog {
+  background: var(--panel);
+  border-radius: 18px;
+  width: 90%;
+  max-width: 820px;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 35px rgba(0, 0, 0, 0.45);
+}
+.client-bsp-images-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(67, 131, 222, 0.18);
+}
+.client-bsp-images-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: var(--accent);
+}
+.client-bsp-images-close {
+  cursor: pointer;
+  font-size: 28px;
+  line-height: 1;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: 0 6px;
+}
+.client-bsp-images-progress-container {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.client-bsp-images-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.client-bsp-images-content {
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+.client-bsp-images-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.client-bsp-images-table th,
+.client-bsp-images-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  text-align: left;
+}
+.client-bsp-images-table th {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+.client-bsp-images-table td button {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+}
+.client-bsp-images-placeholder {
+  padding: 16px;
+  text-align: center;
+  color: var(--accent);
+}
+/* Viewer de imagem dentro do modal */
+.client-bsp-img-viewer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 10000;
+}
+.client-bsp-img-viewer.active {
+  display: flex;
+}
+.client-bsp-img-viewer img {
+  max-width: 90%;
+  max-height: 90%;
+  border-radius: 8px;
+}
+/* Botões de navegação dentro do viewer de imagens */
+.client-bsp-image-prev,
+.client-bsp-image-next {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  border: none;
+  padding: 0.3rem 0.6rem;
+  font-size: 2rem;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 10001;
+  border-radius: 4px;
+}
+.client-bsp-image-prev {
+  left: 1rem;
+}
+.client-bsp-image-next {
+  right: 1rem;
+}
+/* Ao abrir o modal de imagens, o corpo não deve rolar */
+body.client-bsp-images-open {
+  overflow: hidden;
+}
+
+/* v36.94 - Correção visual da coluna Etapa no Portal do Cliente
+   Mantém a coluna Etapa com o mesmo azul claro usado nas demais áreas claras,
+   evitando retorno para azul escuro após ajustes anteriores. */
+.client-project-detail .client-bsp-table thead th:nth-child(5),
+.client-exec-process-detail .client-bsp-table thead th:nth-child(5),
+.client-exec-process-detail .client-bsp-table--schedule thead th:first-child {
+  background: rgba(220, 238, 249, .95) !important;
+  color: #0b3761 !important;
+}
+
+.client-project-detail .client-bsp-table td:nth-child(5),
+.client-exec-process-detail .client-bsp-table td:nth-child(5) {
+  color: #27465d !important;
+}
+
+/* v36.95 - Corrige cabeçalho ETAPA do Schedule Executivo da BSP.
+   A regra global da primeira coluna deixava o cabeçalho escuro; esta regra
+   específica precisa ficar no final do CSS para manter o mesmo azul claro
+   dos demais cabeçalhos da tabela de schedule. */
+.client-exec-schedule-card .client-bsp-table--schedule thead th:first-child,
+.client-exec-schedule-table .client-bsp-table--schedule thead th:first-child,
+.client-bsp-table--schedule thead th:first-child {
+  background: rgba(220, 238, 249, .95) !important;
+  color: #0b3761 !important;
+}
+
+/* Modal de importação de imagem da BSP para Smartsheet */
+.client-bsp-upload-image-modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  z-index: 10050;
+  padding: 20px;
+}
+.client-bsp-upload-image-modal.active {
+  display: flex;
+}
+.client-bsp-upload-image-dialog {
+  width: min(720px, 94vw);
+  max-height: 90vh;
+  overflow: auto;
+  background: #06233b;
+  border: 1px solid rgba(82, 177, 238, 0.32);
+  border-radius: 20px;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.45);
+  color: #e5f6ff;
+}
+.client-bsp-upload-image-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 24px 14px;
+  border-bottom: 1px solid rgba(82, 177, 238, 0.18);
+}
+.client-bsp-upload-image-header h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  color: #55d8ff;
+}
+.client-bsp-upload-image-close {
+  border: 0;
+  background: transparent;
+  color: #55d8ff;
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
+}
+.client-bsp-upload-image-body {
+  padding: 18px 24px;
+}
+.client-bsp-upload-image-note {
+  margin: 0 0 14px;
+  color: #b9d8eb;
+}
+#client-bsp-upload-image-input {
+  width: 100%;
+  padding: 14px;
+  border: 1px dashed rgba(85, 216, 255, 0.55);
+  border-radius: 14px;
+  background: rgba(5, 22, 38, 0.85);
+  color: #dff7ff;
+}
+.client-bsp-upload-image-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+.client-bsp-upload-image-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(19, 70, 105, 0.55);
+  color: #eaf9ff;
+}
+.client-bsp-upload-image-item small {
+  color: #9fc2d8;
+  white-space: nowrap;
+}
+.client-bsp-upload-image-status {
+  min-height: 22px;
+  margin: 14px 0 0;
+  color: #55d8ff;
+  font-weight: 700;
+}
+.client-bsp-upload-image-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 14px 24px 22px;
+  border-top: 1px solid rgba(82, 177, 238, 0.18);
+}
+.client-exec-upload-image-submit:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+body.client-bsp-upload-image-open {
+  overflow: hidden;
+}
+
+/* v36.96: seletor de idioma do painel */
+.language-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 1px solid rgba(67, 131, 222, 0.24);
+  border-radius: 999px;
+  background: rgba(4, 22, 39, 0.78);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.language-switcher select {
+  min-width: 112px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(5, 28, 50, 0.96);
+  color: var(--text);
+  font: inherit;
+  letter-spacing: 0.02em;
+  outline: none;
+  padding: 7px 24px 7px 10px;
+  cursor: pointer;
+}
+.language-switcher select:focus-visible {
+  box-shadow: 0 0 0 2px rgba(0, 200, 255, 0.45);
+}
+@media (max-width: 900px) {
+  .language-switcher {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .language-switcher select {
+    flex: 1;
+  }
+}
+
+
+/* v37.00 - Destaque do botão Projetos em Desenvolvimento no Portal Yinson */
+.client-under-dev-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 8px 16px 8px 14px !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(255, 214, 102, 0.88) !important;
+  background: linear-gradient(135deg, #ff7a18 0%, #ffb000 48%, #ffd84d 100%) !important;
+  color: #071827 !important;
+  font-size: 10.5px !important;
+  font-weight: 950 !important;
+  letter-spacing: .07em !important;
+  text-transform: uppercase !important;
+  box-shadow: 0 10px 26px rgba(255, 122, 24, .28), inset 0 1px 0 rgba(255, 255, 255, .32) !important;
+  opacity: 1 !important;
+}
+.client-under-dev-button::before {
+  content: "🚧";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 19px;
+  border-radius: 999px;
+  background: rgba(7, 24, 39, .14);
+  font-size: 12px;
+  line-height: 1;
+}
+.client-under-dev-button:hover,
+.client-under-dev-button:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(255, 238, 166, 1) !important;
+  background: linear-gradient(135deg, #ff8f24 0%, #ffc22e 50%, #ffe27a 100%) !important;
+  box-shadow: 0 14px 32px rgba(255, 176, 0, .36), 0 0 0 3px rgba(255, 176, 0, .13) !important;
+  outline: none;
+}
+.client-under-dev-button:active {
+  transform: translateY(0);
+}
+@media (max-width: 760px) {
+  .client-under-dev-button {
+    width: 100%;
+    min-height: 38px;
+  }
 }

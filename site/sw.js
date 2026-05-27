@@ -1,4 +1,5 @@
-const CACHE_NAME = 'step-dashboard-portugal-v38-8-completo-br-v3655';
+const CACHE_NAME = 'step-dashboard-portugal-v38.9-melhorias-brasil-v3705';
+// - v37.02: revisa performance, otimiza i18n dinâmico/Yinson e preserva apontamentos rápidos
 // Versão v28: preserva cache local entre logouts e usa caminho rápido pós-login
 // - Mantém assets do app shell versionados para liberar app.js corrigido imediatamente
 // - API continua sem cache no Service Worker; dados operacionais usam cache local validado pelo app
@@ -10,12 +11,35 @@ const CACHE_NAME = 'step-dashboard-portugal-v38-8-completo-br-v3655';
 // - v36.51: corrige carregamento dos apontamentos PCP sem derrubar a tela quando Tracking/Smartsheet demora
 // - v36.52: corrige localização de Tracking por BSP/spool mesmo quando rowId antigo ou campo de avanço está vazio
 // - v36.54: separa carregamento da Validação PCP da consulta Smartsheet para evitar timeout de 30s
-// - v38.8: impede Portal do Cliente autenticado de abrir vazio quando /api/projects retorna snapshot/cache incompleto
+// - v36.59: remove fallback estático antigo e força nova chave de cache do painel
+// - v36.59: alinha carregamento de projetos ao painel Portugal estável, usando Smartsheet PT
+// - v36.69: adiciona permissão por usuário para visualizar Painel do Cliente
+// - v36.71: adiciona botão discreto de atualização no Portal do Cliente e renova cache local
+// - v36.72: editor do Painel do Cliente passa a ajustar Drawings e Procurement antes da fabricação
+// - v36.74: painel individual da TAG/ISO busca Drawing Documentation Control sob demanda
+// - v36.79: restaura app/projetos da v36.76 e mantém Drawing leve isolado
+// - v36.80: acelera login do Portal do Cliente; POs atualizam em segundo plano sem travar a abertura
+// - v36.83: restaura carregamento estável do Portal do Cliente e mantém favicon STEP
+// - v36.84: Portal do Cliente carrega somente linhas do próprio cliente e PO leve
+// - v36.85: login aparece imediatamente; painel fica oculto até autenticar
+// - v36.86: aumenta contraste do aviso Em Tratativa no Painel do Cliente
+// - v36.68: remove bordas brancas e força a logo do cliente a preencher completamente o card
+// - v36.96: adiciona seletor de idioma PT/EN/ES e inclui i18n.js no cache do app
+// - v36.97: logout limpava Cache Storage e Service Worker
+// - v36.98: logout limpa sessão sem remover cache operacional/app shell, mantendo login rápido
+// - v36.99: amplia a cobertura da tradução PT/EN/ES no Portal do Cliente e áreas dinâmicas
+// - v37.00: destaca botão Yinson de Projetos em Desenvolvimento e ajusta colunas internas
 const APP_SHELL = [
   "/",
   "/app.css",
   "/app.js",
+  "/i18n.js",
+  "/client-under-development.html",
   "/manifest.webmanifest",
+  "/assets/favicon.ico",
+  "/assets/favicon-32x32.png",
+  "/assets/favicon-16x16.png",
+  "/favicon.ico",
   "/assets/step-logo.png",
   "/assets/icon-192.png",
   "/assets/icon-512.png",
@@ -27,7 +51,13 @@ const CORE_ASSETS = new Set([
   "/index.html",
   "/app.css",
   "/app.js",
+  "/i18n.js",
+  "/client-under-development.html",
   "/manifest.webmanifest",
+  "/assets/favicon.ico",
+  "/assets/favicon-32x32.png",
+  "/assets/favicon-16x16.png",
+  "/favicon.ico",
   "/sw.js",
 ]);
 

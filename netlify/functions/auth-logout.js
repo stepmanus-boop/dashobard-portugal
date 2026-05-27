@@ -10,5 +10,12 @@ exports.handler = async (event) => {
       lastViewTitle: 'STEP - Painel Operacional',
     }).catch(() => null);
   }
-  return jsonResponse(200, { ok: true }, { headers: { "set-cookie": clearSessionCookie() } });
+  return jsonResponse(200, { ok: true }, {
+    headers: {
+      "set-cookie": clearSessionCookie(),
+      "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
+      "pragma": "no-cache",
+      "expires": "0",
+    },
+  });
 };

@@ -1,11 +1,17 @@
-const PROJECTS_REFRESH_MS = 180000;
-const PROJECTS_CACHE_TTL_MS = 5 * 60 * 1000;
+const PROJECTS_REFRESH_MS = 600000; // v11 performance: reduz polling pesado para 10 min
+const PROJECTS_CACHE_TTL_MS = 20 * 60 * 1000; // v11 performance: cache local válido por 20 min
 const ALERTS_REFRESH_MS = 60000;
 const PRESENCE_HEARTBEAT_MS = 90000;
 const AUTH_REFRESH_MS = 300000;
 const ADMIN_REFRESH_MS = 60000;
 const ALERT_NOTIFICATION_COOLDOWN_MS = 4 * 60 * 60 * 1000;
-const PROJECTS_CACHE_KEY = 'step_dashboard_projects_cache_v4_client_scope';
+const PROJECTS_CACHE_KEY = 'step_dashboard_projects_cache_v12_reliable_boot';
+// v36.80: acelera o login do Portal do Cliente.
+// O painel abre assim que as BSPs aparecem; POs continuam atualizando em segundo plano.
+const CLIENT_PORTAL_RELEASE_WITH_PO_PENDING = true;
+const CLIENT_PORTAL_PO_BACKGROUND_REFRESH_DELAY_MS = 1200;
+const STAGE_TRACKING_VALIDATION_COOLDOWN_MS = 120000;
+
 // Replanejamento WIP mantido no código para uso futuro, mas oculto do painel do cliente nesta versão.
 const CLIENT_REPLANNING_UI_ENABLED = false;
 
@@ -19,6 +25,7 @@ const state = {
   projectView: 'all',
   projectDrill: { open: false, mode: 'total', selectedClientKey: '', selectedVesselKey: '' },
   clientPortal: { selectedVesselKey: '', selectedProjectId: null, rowClickTimer: null, vesselClickTimer: null },
+  clientPoBackgroundRefreshScheduled: false,
   clientApi: { keys: [], loading: false, newToken: '', newTokenKeyId: '', feedback: '' },
   clientBspOverrides: { items: [], byProjectRowId: {}, byProjectNumber: {}, loading: false, loaded: false, feedback: '', editingProjectId: null, activeExecutiveProjectId: null },
   sectorScopedView: false,
@@ -346,6 +353,7 @@ const adminUserClientPlatformImageFileEl = document.getElementById("admin-user-c
 const adminUserClientPlatformImageImportEl = document.getElementById("admin-user-client-platform-image-import");
 const adminUserClientPlatformNameEl = document.getElementById("admin-user-client-platform-name");
 const adminUserClientPlatformImagesEl = document.getElementById("admin-user-client-platform-images");
+const adminUserCanViewClientPanelEl = document.getElementById("admin-user-can-view-client-panel");
 const adminTabTriggerEls = Array.from(document.querySelectorAll('[data-admin-tab-trigger]'));
 const adminTabPanelEls = Array.from(document.querySelectorAll('[data-admin-tab-panel]'));
 const projectSignalModalEl = document.getElementById('project-signal-modal');
@@ -451,7 +459,7 @@ async function registerServiceWorker() {
       window.location.reload();
     });
 
-    const registration = await navigator.serviceWorker.register('./sw.js?v=32', { updateViaCache: 'none' });
+    const registration = await navigator.serviceWorker.register('./sw.js?v=41', { updateViaCache: 'none' });
     if (typeof registration.update === 'function') {
       registration.update().catch(() => {});
     }
@@ -3637,6 +3645,12 @@ function resetClientBspOverridesState() {
   state.clientBspOverrides = { items: [], byProjectRowId: {}, byProjectNumber: {}, loading: false, loaded: false, feedback: '', editingProjectId: null, activeExecutiveProjectId: null };
 }
 
+function userCanViewClientPanel(user = state.user) {
+  if (!user) return false;
+  if (user.role === 'admin' || user.role === 'client') return true;
+  return user.canViewClientPanel === true;
+}
+
 function canManageClientBspPanel(project = null, user = state.user) {
   if (!user) return false;
   if (user.role === 'admin') return true;
@@ -3645,7 +3659,7 @@ function canManageClientBspPanel(project = null, user = state.user) {
 }
 
 function canOpenClientBspPanel(project = null, user = state.user) {
-  return isClientUser(user) || canManageClientBspPanel(project, user);
+  return isClientUser(user) || canManageClientBspPanel(project, user) || userCanViewClientPanel(user);
 }
 
 function openClientBspExecutiveForPmEdit(project) {
@@ -3669,6 +3683,7 @@ function normalizeClientBspOverride(row = {}) {
   const customFields = row.customFields && typeof row.customFields === 'object'
     ? row.customFields
     : (row.custom_fields && typeof row.custom_fields === 'object' ? row.custom_fields : {});
+  const systemDate = (camelKey, snakeKey = '') => row[camelKey] ?? (snakeKey ? row[snakeKey] : '') ?? customFields[`__${camelKey}`] ?? customFields[camelKey] ?? '';
   return {
     id: row.id || '',
     region: row.region || '',
@@ -3679,6 +3694,10 @@ function normalizeClientBspOverride(row = {}) {
     clientName: row.clientName ?? row.client_name ?? '',
     vessel: row.vessel || '',
     pm: row.pm || '',
+    drawingsStartOverride: systemDate('drawingsStartOverride'),
+    drawingsFinishOverride: systemDate('drawingsFinishOverride'),
+    procurementStartOverride: systemDate('procurementStartOverride'),
+    procurementFinishOverride: systemDate('procurementFinishOverride'),
     fabricationStartOverride: row.fabricationStartOverride ?? row.fabrication_start_override ?? '',
     boilermakerFinishOverride: row.boilermakerFinishOverride ?? row.boilermaker_finish_override ?? '',
     weldingFinishOverride: row.weldingFinishOverride ?? row.welding_finish_override ?? '',
@@ -3725,6 +3744,10 @@ function getClientBspOverride(project) {
 function hasClientBspOverrideContent(override) {
   if (!override) return false;
   const values = [
+    override.drawingsStartOverride,
+    override.drawingsFinishOverride,
+    override.procurementStartOverride,
+    override.procurementFinishOverride,
     override.fabricationStartOverride,
     override.boilermakerFinishOverride,
     override.weldingFinishOverride,
@@ -3758,8 +3781,118 @@ function clientOverrideDateObject(value) {
 function clientOverrideCustomFieldsArray(override) {
   const fields = override?.customFields && typeof override.customFields === 'object' ? override.customFields : {};
   return Object.entries(fields)
+    .filter(([label]) => !String(label || '').startsWith('__'))
     .map(([label, value]) => ({ label: String(label || '').trim(), value: String(value || '').trim() }))
     .filter((item) => item.label || item.value);
+}
+
+
+function clientSafeJsonForScript(value) {
+  return JSON.stringify(value == null ? null : value).replace(/</g, '\u003c').replace(/>/g, '\u003e').replace(/&/g, '\u0026');
+}
+
+function normalizeClientIsoScheduleOverride(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const startDate = clientDateInputValue(value.startDate || value.start || value.isoStartDate || value.inicio || '');
+  const finishDate = clientDateInputValue(value.finishDate || value.finish || value.isoFinishDate || value.termino || '');
+  const note = String(value.note || value.observation || value.observacao || '').trim();
+  const iso = String(value.iso || value.ISO || '').trim();
+  const drawing = String(value.drawing || value.drawingNumber || '').trim();
+  const description = String(value.description || '').trim();
+  if (!startDate && !finishDate && !note && !iso && !drawing && !description) return null;
+  return {
+    startDate,
+    finishDate,
+    note,
+    iso,
+    drawing,
+    description,
+    updatedAt: value.updatedAt || value.updated_at || null,
+    updatedBy: value.updatedBy || value.updated_by || '',
+    updatedByName: value.updatedByName || value.updated_by_name || '',
+  };
+}
+
+function getClientIsoScheduleOverrideMap(override) {
+  const fields = override?.customFields && typeof override.customFields === 'object' ? override.customFields : {};
+  const map = fields.__isoDateOverrides || fields.__isoScheduleOverrides || fields.isoDateOverrides;
+  return map && typeof map === 'object' && !Array.isArray(map) ? map : {};
+}
+
+function getClientSpoolIsoOverrideCandidateKeys(spool, index = 0) {
+  const candidates = [
+    getClientSpoolPanelKey(spool, index),
+    normalizeCompactText(spool?.iso || ''),
+    normalizeCompactText(spool?.drawing || ''),
+    normalizeCompactText(spool?.projectRef || ''),
+    normalizeCompactText([spool?.iso, spool?.drawing].filter(Boolean).join('|')),
+  ].map((item) => String(item || '').trim()).filter(Boolean);
+  return Array.from(new Set(candidates));
+}
+
+function getClientIsoDateOverride(project, spool, index = 0) {
+  if (!project || !spool) return null;
+  const override = getClientBspOverride(project);
+  const map = getClientIsoScheduleOverrideMap(override);
+  if (!map || !Object.keys(map).length) return null;
+  for (const key of getClientSpoolIsoOverrideCandidateKeys(spool, index)) {
+    const normalized = normalizeClientIsoScheduleOverride(map[key]);
+    if (normalized) return { ...normalized, key };
+  }
+  return null;
+}
+
+function clientReadSpoolDateCandidates(spool, wantedKeys, candidates) {
+  clientReadDateCandidatesFromSource(spool, wantedKeys, candidates);
+  clientReadDateCandidatesFromSource(spool?.stageValues, wantedKeys, candidates);
+  clientReadDateCandidatesFromMilestones(spool?.milestones, wantedKeys, candidates);
+}
+
+function getClientSpoolTrackingDate(spool, wantedKeys, mode = 'last') {
+  const candidates = [];
+  clientReadSpoolDateCandidates(spool, wantedKeys, candidates);
+  const unique = Array.from(new Map(candidates.filter(Boolean).map((date) => [date.getTime(), date])).values()).sort((a, b) => a - b);
+  if (!unique.length) return null;
+  return mode === 'first' ? unique[0] : unique[unique.length - 1];
+}
+
+function getClientSpoolTrackingDates(project, spool) {
+  const scopedProject = { ...(project || {}), spools: spool ? [spool] : [], stageValues: spool?.stageValues || project?.stageValues || {} };
+  const hydro = shouldClientShowHydro(scopedProject);
+  return {
+    drawingsStart: getClientSpoolTrackingDate(spool, ['Drawing Start Date', 'Drawings Start Date', 'Engineering Start Date', 'Start Drawing Date'], 'first'),
+    drawingsFinish: getClientSpoolTrackingDate(spool, ['Drawing Execution Advance%', 'Drawing Finish Date', 'Drawings Finish Date', 'Engineering Finish Date', 'Drawing'], 'last'),
+    procurementStart: getClientSpoolTrackingDate(spool, ['Procurement Start Date', 'Procuremnt Start Date', 'Material Procurement Start Date', 'Materials Start Date'], 'first'),
+    procurementFinish: getClientSpoolTrackingDate(spool, ['Procuremnt Status %', 'Procurement Status %', 'Procurement Finish Date', 'Material Separation', 'Material Release to Fabrication', 'Materials Finish Date'], 'last'),
+    fabricationStart: getClientSpoolTrackingDate(spool, ['Fabrication Start Date', 'Fab. Início', 'FAB INICIO', 'Fab Inicio'], 'first'),
+    boilermakerFinish: getClientSpoolTrackingDate(spool, ['Boilermaker Finish Date', 'Caldeiraria', 'Calderaria Finish Date'], 'last'),
+    weldingFinish: getClientSpoolTrackingDate(spool, ['Welding Finish Date', 'Solda', 'Weld Finish Date', 'Full Welding Finish Date'], 'last'),
+    inspectionFinish: getClientSpoolTrackingDate(spool, ['Inspection Finish Date (QC)', 'Final Dimensional Inspection Finish Date', 'Inspection Finish'], 'last'),
+    thFinish: hydro ? getClientSpoolTrackingDate(spool, ['TH Finish Date', 'Hydro Finish Date', 'Hydro Testing Finish Date'], 'last') : null,
+    coatingFinish: getClientSpoolTrackingDate(spool, ['Coating Finish Date', 'Painting Finish Date', 'HDG / FBE DATE RETORNO (PAINT)'], 'last'),
+    projectFinish: getClientSpoolTrackingDate(spool, ['Project Finish Date', 'Data de Envio', 'Shipment Date', 'Delivery Date'], 'last'),
+    sources: {},
+  };
+}
+
+function buildClientIsoExecutiveSchedule(project, spool, index = 0) {
+  if (!project || !spool) return [];
+  const isoOverride = getClientIsoDateOverride(project, spool, index) || {};
+  const scopedProject = {
+    ...project,
+    spools: [spool],
+    stageValues: spool.stageValues && typeof spool.stageValues === 'object' && Object.keys(spool.stageValues).length ? spool.stageValues : (project.stageValues || {}),
+    plannedStartDate: isoOverride.startDate || spool.plannedStartDate || spool.startDate || project.plannedStartDate,
+    plannedFinishDate: isoOverride.finishDate || spool.plannedFinishDate || spool.finishDate || spool.deliveryDate || project.plannedFinishDate,
+  };
+  const start = parseClientSafeDateObject(isoOverride.startDate) || parseClientSafeDateObject(scopedProject.plannedStartDate) || getClientAnalyticStartDate(project);
+  const finish = parseClientSafeDateObject(isoOverride.finishDate) || parseClientSafeDateObject(scopedProject.plannedFinishDate) || getClientAnalyticFinishDate(project);
+  return buildClientExecutiveSchedule(scopedProject, {
+    start,
+    finish,
+    realDates: getClientSpoolTrackingDates(project, spool),
+    skipReplan: true,
+  });
 }
 
 async function loadClientBspOverrides(options = {}) {
@@ -4008,8 +4141,13 @@ function ensureClientDashboardEl() {
       </div>
       <div class="client-hero-actions">
         <span id="client-dashboard-sync">Atualização: --</span>
+        <button id="client-dashboard-refresh" class="mini-action-button client-refresh-button" type="button" title="Buscar as informações mais recentes do Smartsheet">Atualizar</button>
+        <!-- Ações de macro e API são exibidas em outras áreas do portal. Ocultamos aqui para evitar duplicação.
         <button class="mini-action-button client-macro-button" type="button" data-client-open-macro-dashboard>Visão executiva da carteira</button>
         <button class="mini-action-button client-api-button" type="button" data-client-open-api>Gerar API</button>
+        -->
+        <!-- Botão para projetos em desenvolvimento (apenas Yinson) -->
+        <button id="client-under-dev-button" class="mini-action-button client-under-dev-button" type="button" data-client-open-under-dev>Projetos em desenvolvimento</button>
       </div>
     </div>
     <div class="client-summary-grid">
@@ -4051,6 +4189,11 @@ function ensureClientDashboardEl() {
 
   const searchInput = el.querySelector('#client-project-search');
   const clearBtn = el.querySelector('#client-clear-search');
+  const refreshBtn = el.querySelector('#client-dashboard-refresh');
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', refreshClientPortalData);
+  }
 
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
@@ -4090,6 +4233,53 @@ function setClientDashboardMode() {
   if (openMyProjectSignalsEl && enabled) openMyProjectSignalsEl.classList.add('hidden');
   if (openProjectSignalsEl && enabled) openProjectSignalsEl.classList.add('hidden');
   if (openStageUpdatesEl && enabled) openStageUpdatesEl.classList.add('hidden');
+}
+
+async function refreshClientPortalData(event) {
+  if (event?.preventDefault) event.preventDefault();
+  if (!isClientUser()) return;
+
+  const button = document.getElementById('client-dashboard-refresh');
+  const syncEl = document.getElementById('client-dashboard-sync');
+  const originalText = button?.textContent || 'Atualizar';
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Atualizando...';
+      button.classList.add('is-loading');
+    }
+    if (syncEl) syncEl.textContent = 'Atualizando informações...';
+
+    clearProjectsCache();
+    state.lastProjectsFetchAt = 0;
+
+    await loadProjects({
+      force: true,
+      skipLocalCache: true,
+      suppressLoadingState: true,
+      requireData: false,
+      requireClientPo: false,
+    });
+
+    applyFilter();
+    renderClientDashboard();
+    renderClientBspPanel();
+
+    if (syncEl) syncEl.textContent = state.meta?.lastSync
+      ? `Atualização: ${new Date(state.meta.lastSync).toLocaleString('pt-BR')}`
+      : `Atualizado: ${new Date().toLocaleString('pt-BR')}`;
+  } catch (error) {
+    console.error('[Portal Cliente] Falha ao atualizar informações:', error);
+    if (syncEl) syncEl.textContent = `Falha ao atualizar: ${error?.message || 'tente novamente'}`;
+    window.alert(error?.message || 'Falha ao atualizar as informações do cliente.');
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+      button.classList.remove('is-loading');
+    }
+  }
 }
 
 function getClientVesselGroups(projects = state.projects) {
@@ -4147,6 +4337,19 @@ function renderClientDashboard() {
   setText('client-stat-welded', `${formatNumber(totals.welded, 0)} kg`);
   setText('client-stat-m2', `${formatNumber(totals.m2, 3)} m²`);
   setText('client-stat-progress', formatPercent(totals.bsps ? totals.progress / totals.bsps : 0));
+
+  // Show or hide the "Projetos em desenvolvimento" button based on client name.
+  // Only the Yinson portal should display this button. Other clients (e.g. SBM) must not see
+  // projects under development from Yinson. We perform a case-insensitive check
+  // against the portal name and toggle the button's visibility accordingly.
+  (function toggleUnderDevButton() {
+    const btn = document.getElementById('client-under-dev-button');
+    if (!btn) return;
+    const name = String(getClientPortalName() || '').toLowerCase();
+    const shouldShow = name.includes('yinson');
+    // Use inline style to hide the element completely rather than relying on CSS classes
+    btn.style.display = shouldShow ? '' : 'none';
+  })();
 
   const groups = getClientVesselGroups(projects);
   if (!state.clientPortal.selectedVesselKey && groups.length) state.clientPortal.selectedVesselKey = groups[0].key;
@@ -4380,6 +4583,42 @@ function buildClientStandalonePanelHtml(project, spool = null) {
     const itemState = getClientSpoolVisualState(item);
     return `<tr><td>${escapeHtml(item.iso || item.drawing || `Tag ${index + 1}`)}</td><td>${escapeHtml(item.description || '—')}</td><td><span class="chip chip-${itemState}">${escapeHtml(item.currentStatus || item.stage || uiStateLabel(item.uiState))}</span></td><td>${formatPercent(getClientSpoolProgress(item))}</td><td>${formatNumber(item.kilos || 0, 2)} kg</td></tr>`;
   }).join('') : '';
+  const drawingDetailNumber = isSpool ? String(spool?.iso || spool?.drawing || spool?.projectRef || title || '').trim() : '';
+  const drawingDetailNumberJson = clientSafeJsonForScript(drawingDetailNumber);
+  const isoOverride = isSpool ? (getClientIsoDateOverride(project, spool) || {}) : {};
+  const isoScheduleRows = isSpool ? buildClientIsoExecutiveSchedule(project, spool) : [];
+  const isoScheduleModel = isoScheduleRows.map((row) => ({
+    type: row.type,
+    key: row.key,
+    label: row.label,
+    progress: Number(row.progress || 0),
+    duration: Math.max(1, Number(row.duration || 1)),
+    start: clientDateInputValue(row.start),
+    finish: clientDateInputValue(row.finish),
+  }));
+  const isoPanelKey = isSpool ? getClientSpoolPanelKey(spool) : '';
+  const canEditIsoDates = isSpool && canManageClientBspPanel(project);
+  const projectOverride = getClientBspOverride(project) || {};
+  const isoEditorPayload = isSpool ? {
+    canEdit: canEditIsoDates,
+    project: {
+      projectRowId: getClientBspOverrideProjectRowId(project),
+      projectNumber: getClientBspOverrideProjectNumber(project),
+      projectDisplay: project.projectDisplay || project.projectNumber || '',
+      clientName: getProjectClientLabel(project),
+      vessel: getProjectVesselLabel(project),
+      pm: project.pm || '',
+    },
+    iso: {
+      key: isoPanelKey,
+      iso: spool?.iso || '',
+      drawing: spool?.drawing || '',
+      description: spool?.description || '',
+    },
+    existingCustomFields: projectOverride.customFields || {},
+    initialOverride: isoOverride,
+    scheduleRows: isoScheduleModel,
+  } : null;
 
   return `<!doctype html>
 <html lang="pt-BR">
@@ -4400,6 +4639,21 @@ function buildClientStandalonePanelHtml(project, spool = null) {
   .toolbar { display:flex; gap:10px; justify-content:flex-end; margin-top:14px; }
   button { border:0; border-radius:999px; padding:11px 16px; font-weight:900; cursor:pointer; background:var(--blue); color:#fff; }
   button.secondary { background:#e8f3f7; color:var(--blue); }
+  .iso-schedule-head { display:flex; justify-content:space-between; gap:14px; align-items:flex-start; flex-wrap:wrap; }
+  .iso-schedule-head p { margin:4px 0 0; color:#49677b; font-weight:700; }
+  .iso-schedule-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:flex-end; }
+  .iso-schedule-editor { margin:14px 0; padding:14px; border:1px dashed var(--line); border-radius:18px; background:#f8fcff; }
+  .iso-schedule-editor.hidden { display:none; }
+  .iso-schedule-editor-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .iso-schedule-editor label { display:grid; gap:6px; color:#49677b; font-weight:900; font-size:12px; text-transform:uppercase; letter-spacing:.08em; }
+  .iso-schedule-editor input { width:100%; border:1px solid var(--line); border-radius:12px; padding:11px 12px; font:inherit; color:var(--blue); background:#fff; }
+  .iso-schedule-editor-actions { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+  .iso-schedule-status { margin-top:8px; color:#49677b; font-weight:800; }
+  .iso-schedule-status.error { color:#991b1b; }
+  .iso-manual-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:12px 0; }
+  .iso-manual-card { border:1px solid var(--line); border-radius:16px; padding:13px; background:#f4fbfe; }
+  .iso-manual-card span { display:block; color:#638094; font-size:10px; font-weight:900; letter-spacing:.10em; text-transform:uppercase; margin-bottom:5px; }
+  .iso-manual-card strong { color:var(--blue); font-size:17px; }
   .grid { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:14px; margin-top:18px; }
   .card { background:#fff; border:1px solid var(--line); border-radius:20px; padding:16px; box-shadow:0 12px 30px rgba(8,58,99,.08); min-width:0; }
   .card span { display:block; color:#638094; font-size:11px; font-weight:900; letter-spacing:.10em; text-transform:uppercase; margin-bottom:6px; }
@@ -4419,8 +4673,26 @@ function buildClientStandalonePanelHtml(project, spool = null) {
   .chip-completed { background:#dcfce7; color:#166534; }
   .chip-in-progress { background:#fef3c7; color:#92400e; }
   .chip-not-started { background:#e2e8f0; color:#475569; }
+  .client-spool-chip, .client-spool-progress { display:inline-flex; align-items:center; border-radius:999px; padding:6px 10px; font-weight:900; font-size:12px; background:#e8f3f7; color:var(--blue); }
+  .client-spool-chip--completed, .client-spool-progress--completed { background:#dcfce7; color:#166534; }
+  .client-spool-chip--in-progress, .client-spool-progress--in-progress { background:#fef3c7; color:#92400e; }
+  .client-spool-chip--not-started, .client-spool-progress--not-started { background:#e2e8f0; color:#475569; }
+  .client-schedule-child { display:inline-block; padding-left:18px; color:#49677b; }
+  .client-planned-date { display:block; margin-top:3px; color:#638094; font-size:11px; font-weight:800; }
+  .client-schedule-row--group td { background:#f8fcff; font-weight:900; }
   .note { color:#49677b; line-height:1.5; white-space:pre-wrap; }
-  @media (max-width: 850px) { .hero, .progress-wrap { grid-template-columns:1fr; } .grid { grid-template-columns:1fr 1fr; } .page { padding:14px; } }
+  .drawing-detail-status { color:#49677b; font-weight:800; }
+  .drawing-detail-status.error { color:#991b1b; }
+  .drawing-detail-grid { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:12px; margin:12px 0 16px; }
+  .drawing-detail-card { background:#f4fbfe; border:1px solid var(--line); border-radius:16px; padding:13px; min-width:0; }
+  .drawing-detail-card span { display:block; color:#638094; font-size:10px; font-weight:900; letter-spacing:.10em; text-transform:uppercase; margin-bottom:5px; }
+  .drawing-detail-card strong { display:block; color:var(--blue); font-size:16px; line-height:1.2; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .drawing-revisions { display:grid; gap:12px; margin-top:14px; }
+  .drawing-revision { border:1px solid var(--line); border-radius:16px; overflow:hidden; background:#fff; }
+  .drawing-revision h3 { margin:0; padding:12px 14px; background:#eef8fb; color:var(--blue); font-size:15px; }
+  .drawing-revision table { border:0; border-radius:0; }
+  .drawing-revision td:first-child { width:36%; color:#49677b; font-weight:900; }
+  @media (max-width: 850px) { .hero, .progress-wrap { grid-template-columns:1fr; } .grid, .drawing-detail-grid { grid-template-columns:1fr 1fr; } .page { padding:14px; } }
   @media print { .toolbar { display:none; } body { background:#fff; } .page { max-width:none; } }
 </style>
 </head>
@@ -4454,6 +4726,223 @@ function buildClientStandalonePanelHtml(project, spool = null) {
       </div>
     </section>
 
+    ${isSpool ? `<section class="section" id="iso-schedule-section">
+      <div class="iso-schedule-head">
+        <div>
+          <h2>Cronograma da ISO</h2>
+          <p>Datas específicas desta ISO. Quando o PM informar início e término manual, o cronograma da ISO passa a usar essas datas.</p>
+        </div>
+        ${canEditIsoDates ? `<div class="iso-schedule-actions"><button type="button" id="iso-schedule-edit-button">Editar início/fim da ISO</button></div>` : ''}
+      </div>
+      <div class="iso-manual-grid">
+        <article class="iso-manual-card"><span>Início manual da ISO</span><strong id="iso-manual-start-display">${escapeHtml(clientFormatDateValue(isoOverride.startDate) || '—')}</strong></article>
+        <article class="iso-manual-card"><span>Término manual da ISO</span><strong id="iso-manual-finish-display">${escapeHtml(clientFormatDateValue(isoOverride.finishDate) || '—')}</strong></article>
+      </div>
+      ${canEditIsoDates ? `<form id="iso-schedule-editor-form" class="iso-schedule-editor hidden">
+        <div class="iso-schedule-editor-grid">
+          <label><span>Data de início da ISO</span><input type="date" id="iso-schedule-start-input" value="${escapeHtml(clientDateInputValue(isoOverride.startDate))}" /></label>
+          <label><span>Data de término da ISO</span><input type="date" id="iso-schedule-finish-input" value="${escapeHtml(clientDateInputValue(isoOverride.finishDate))}" /></label>
+        </div>
+        <div class="iso-schedule-editor-actions">
+          <button type="submit">Salvar datas da ISO</button>
+          <button class="secondary" type="button" id="iso-schedule-cancel-button">Cancelar</button>
+        </div>
+        <div id="iso-schedule-save-status" class="iso-schedule-status"></div>
+      </form>` : ''}
+      <div id="iso-schedule-table-content">${renderClientExecutiveScheduleRows(isoScheduleRows, 'Cronograma não disponível para esta ISO.')}</div>
+    </section>
+    <script>
+      (function () {
+        var payload = ${clientSafeJsonForScript(isoEditorPayload)};
+        if (!payload) return;
+        var editButton = document.getElementById('iso-schedule-edit-button');
+        var form = document.getElementById('iso-schedule-editor-form');
+        var cancelButton = document.getElementById('iso-schedule-cancel-button');
+        var startInput = document.getElementById('iso-schedule-start-input');
+        var finishInput = document.getElementById('iso-schedule-finish-input');
+        var statusEl = document.getElementById('iso-schedule-save-status');
+        var startDisplay = document.getElementById('iso-manual-start-display');
+        var finishDisplay = document.getElementById('iso-manual-finish-display');
+        var tableTarget = document.getElementById('iso-schedule-table-content');
+        function esc(value) {
+          return String(value == null || value === '' ? '—' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        }
+        function parseDate(value) {
+          var match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+          if (!match) return null;
+          return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+        }
+        function ymd(date) {
+          if (!(date instanceof Date) || isNaN(date)) return '';
+          return date.getUTCFullYear() + '-' + String(date.getUTCMonth() + 1).padStart(2, '0') + '-' + String(date.getUTCDate()).padStart(2, '0');
+        }
+        function br(value) {
+          var d = parseDate(value);
+          if (!d) return '—';
+          return String(d.getUTCDate()).padStart(2, '0') + '/' + String(d.getUTCMonth() + 1).padStart(2, '0') + '/' + d.getUTCFullYear();
+        }
+        function isBiz(date) {
+          var day = date.getUTCDay();
+          return day !== 0 && day !== 6;
+        }
+        function addBiz(date, days) {
+          var next = new Date(date.getTime());
+          var remaining = Math.max(0, Number(days) || 0);
+          while (remaining > 0) {
+            next.setUTCDate(next.getUTCDate() + 1);
+            if (isBiz(next)) remaining -= 1;
+          }
+          return next;
+        }
+        function bizDays(a, b) {
+          var start = parseDate(a);
+          var finish = parseDate(b);
+          if (!start || !finish) return 0;
+          if (start > finish) { var tmp = start; start = finish; finish = tmp; }
+          var count = 0;
+          var cursor = new Date(start.getTime());
+          while (cursor <= finish) {
+            if (isBiz(cursor)) count += 1;
+            cursor.setUTCDate(cursor.getUTCDate() + 1);
+          }
+          return Math.max(1, count);
+        }
+        function scaleDurations(items, total) {
+          var safeItems = (items || []).map(function (item) { return Object.assign({}, item, { duration: Math.max(1, Number(item.duration || 1)) }); });
+          var safeTotal = Math.max(safeItems.length || 1, Number(total) || 1);
+          var baseTotal = safeItems.reduce(function (sum, item) { return sum + item.duration; }, 0) || safeItems.length || 1;
+          var scaled = safeItems.map(function (item) {
+            return Object.assign({}, item, { duration: Math.max(1, Math.round((item.duration / baseTotal) * safeTotal)) });
+          });
+          var diff = safeTotal - scaled.reduce(function (sum, item) { return sum + item.duration; }, 0);
+          var i = 0;
+          while (diff !== 0 && scaled.length) {
+            var idx = i % scaled.length;
+            if (diff > 0) { scaled[idx].duration += 1; diff -= 1; }
+            else if (scaled[idx].duration > 1) { scaled[idx].duration -= 1; diff += 1; }
+            i += 1;
+            if (i > 500) break;
+          }
+          return scaled;
+        }
+        function percent(value) {
+          var n = Number(value || 0);
+          if (!isFinite(n)) return '—';
+          return n.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + '%';
+        }
+        function visualState(progress) {
+          var n = Number(progress || 0);
+          if (n >= 99.9) return 'completed';
+          if (n > 0) return 'in-progress';
+          return 'not-started';
+        }
+        function buildRowsForPeriod(startValue, finishValue) {
+          var start = parseDate(startValue);
+          var finish = parseDate(finishValue);
+          var base = Array.isArray(payload.scheduleRows) ? payload.scheduleRows : [];
+          if (!start || !finish || !base.length) return base;
+          if (start > finish) { var tmp = start; start = finish; finish = tmp; }
+          var total = bizDays(ymd(start), ymd(finish));
+          var groups = base.filter(function (row) { return row.type === 'group'; });
+          var scaledGroups = scaleDurations(groups, total);
+          var rows = [];
+          var cursor = new Date(start.getTime());
+          scaledGroups.forEach(function (group, groupIndex) {
+            var originalGroupIndex = base.findIndex(function (row) { return row.type === 'group' && row.key === group.key; });
+            var nextGroupIndex = base.findIndex(function (row, idx) { return idx > originalGroupIndex && row.type === 'group'; });
+            if (nextGroupIndex < 0) nextGroupIndex = base.length;
+            var children = base.slice(originalGroupIndex + 1, nextGroupIndex).filter(function (row) { return row.type === 'child'; });
+            var groupStart = new Date(cursor.getTime());
+            var groupFinish = addBiz(groupStart, Math.max(0, group.duration - 1));
+            if (groupIndex === scaledGroups.length - 1 || groupFinish > finish) groupFinish = new Date(finish.getTime());
+            rows.push(Object.assign({}, group, { start: ymd(groupStart), finish: ymd(groupFinish) }));
+            var childCursor = new Date(groupStart.getTime());
+            scaleDurations(children, group.duration).forEach(function (child, childIndex, arr) {
+              var childStart = new Date(childCursor.getTime());
+              var childFinish = addBiz(childStart, Math.max(0, child.duration - 1));
+              if (childIndex === arr.length - 1 || childFinish > groupFinish) childFinish = new Date(groupFinish.getTime());
+              rows.push(Object.assign({}, child, { start: ymd(childStart), finish: ymd(childFinish) }));
+              childCursor = addBiz(childFinish, 1);
+            });
+            cursor = addBiz(groupFinish, 1);
+            if (cursor > finish) cursor = new Date(finish.getTime());
+          });
+          return rows;
+        }
+        function renderRows(rows) {
+          if (!tableTarget) return;
+          if (!rows || !rows.length) {
+            tableTarget.innerHTML = '<div class="client-empty-state">Cronograma não disponível para esta ISO.</div>';
+            return;
+          }
+          tableTarget.innerHTML = '<div class="client-table-wrap client-table-wrap--compact client-exec-schedule-table"><table class="client-bsp-table client-bsp-table--schedule"><thead><tr><th>Etapa</th><th>%</th><th>Prazo médio</th><th>Início</th><th>Término</th><th>Status</th></tr></thead><tbody>' + rows.map(function (row) {
+            var state = visualState(row.progress);
+            var label = row.type === 'group' ? '<strong>' + esc(row.label) + '</strong>' : '<span class="client-schedule-child">' + esc(row.label) + '</span>';
+            var status = state === 'completed' ? 'Concluído' : state === 'in-progress' ? 'Em andamento' : 'Não iniciado';
+            return '<tr class="client-schedule-row client-schedule-row--' + state + ' client-schedule-row--' + esc(row.type) + '"><td>' + label + '</td><td><span class="client-spool-progress client-spool-progress--' + state + '">' + percent(row.progress) + '</span></td><td>' + esc(row.duration || 1) + 'd</td><td>' + br(row.start) + '</td><td>' + br(row.finish) + '</td><td><span class="client-spool-chip client-spool-chip--' + state + '">' + status + '</span></td></tr>';
+          }).join('') + '</tbody></table></div>';
+        }
+        function updateManualDisplays(startValue, finishValue) {
+          if (startDisplay) startDisplay.textContent = br(startValue);
+          if (finishDisplay) finishDisplay.textContent = br(finishValue);
+          if (startValue && finishValue) renderRows(buildRowsForPeriod(startValue, finishValue));
+        }
+        if (editButton && form) {
+          editButton.addEventListener('click', function () { form.classList.remove('hidden'); });
+        }
+        if (cancelButton && form) {
+          cancelButton.addEventListener('click', function () { form.classList.add('hidden'); });
+        }
+        if (payload.initialOverride) updateManualDisplays(payload.initialOverride.startDate || '', payload.initialOverride.finishDate || '');
+        if (form && payload.canEdit) {
+          form.addEventListener('submit', function (event) {
+            event.preventDefault();
+            var startValue = startInput ? startInput.value : '';
+            var finishValue = finishInput ? finishInput.value : '';
+            if (startValue && finishValue && parseDate(startValue) > parseDate(finishValue)) {
+              if (statusEl) { statusEl.classList.add('error'); statusEl.textContent = 'A data de início não pode ser maior que a data de término.'; }
+              return;
+            }
+            if (statusEl) { statusEl.classList.remove('error'); statusEl.textContent = 'Salvando datas da ISO...'; }
+            var customFields = Object.assign({}, payload.existingCustomFields || {});
+            var map = customFields.__isoDateOverrides && typeof customFields.__isoDateOverrides === 'object' ? Object.assign({}, customFields.__isoDateOverrides) : {};
+            map[payload.iso.key] = Object.assign({}, map[payload.iso.key] || {}, {
+              startDate: startValue,
+              finishDate: finishValue,
+              iso: payload.iso.iso || '',
+              drawing: payload.iso.drawing || '',
+              description: payload.iso.description || '',
+              updatedAt: new Date().toISOString()
+            });
+            customFields.__isoDateOverrides = map;
+            fetch('/api/client-bsp-overrides', {
+              method: 'POST',
+              credentials: 'same-origin',
+              cache: 'no-store',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(Object.assign({}, payload.project, { mergeCustomFields: true, customFields: customFields }))
+            })
+              .then(function (response) { return response.json().catch(function () { return null; }).then(function (data) { return { response: response, data: data }; }); })
+              .then(function (result) {
+                if (!result.response.ok || !result.data || !result.data.ok) throw new Error((result.data && result.data.error) || 'Falha ao salvar as datas da ISO.');
+                payload.existingCustomFields = result.data.override && result.data.override.customFields ? result.data.override.customFields : customFields;
+                updateManualDisplays(startValue, finishValue);
+                if (statusEl) { statusEl.classList.remove('error'); statusEl.textContent = 'Datas da ISO salvas com sucesso.'; }
+                if (form) form.classList.add('hidden');
+              })
+              .catch(function (error) {
+                if (statusEl) { statusEl.classList.add('error'); statusEl.textContent = error && error.message ? error.message : 'Falha ao salvar as datas da ISO.'; }
+              });
+          });
+        }
+      })();
+    </script>` : ''}
+
     <section class="section">
       <h2>Evolução por etapa</h2>
       <table><thead><tr><th>Etapa</th><th>Avanço</th></tr></thead><tbody>
@@ -4465,6 +4954,99 @@ function buildClientStandalonePanelHtml(project, spool = null) {
       <h2>Observações</h2>
       <div class="note">${escapeHtml(formatClientStandalonePanelValue(observation))}</div>
     </section>
+
+    ${isSpool ? `<section class="section" id="drawing-control-section" data-drawing-number="${escapeHtml(drawingDetailNumber)}">
+      <h2>Detalhamento de Drawing</h2>
+      <div id="drawing-control-content" class="drawing-detail-status">Carregando datas e revisões do Drawing Documentation Control...</div>
+    </section>
+    <script>
+      (function () {
+        var drawingNumber = ${drawingDetailNumberJson};
+        var content = document.getElementById('drawing-control-content');
+        if (!content || !drawingNumber) return;
+        function esc(value) {
+          return String(value == null || value === '' ? '—' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        }
+        function row(label, value) {
+          return '<tr><td>' + esc(label) + '</td><td>' + esc(value || '—') + '</td></tr>';
+        }
+        function card(label, value) {
+          return '<article class="drawing-detail-card"><span>' + esc(label) + '</span><strong>' + esc(value || '—') + '</strong></article>';
+        }
+        function revisionBlock(title, rows) {
+          return '<article class="drawing-revision"><h3>' + esc(title) + '</h3><table><tbody>' + rows.join('') + '</tbody></table></article>';
+        }
+        function render(detail) {
+          var revA = detail.revA || {};
+          var html = '';
+          html += '<div class="drawing-detail-grid">';
+          html += card('Drawing Number', detail.drawingNumber);
+          html += card('Status atual', detail.currentDrawingStatus);
+          html += card('Início desenho', detail.drawingStartDate);
+          html += card('Final desenho', detail.drawingFinishDate || detail.approvalDate);
+          html += card('Unidade', detail.unit);
+          html += card('Quantidade/Peso', detail.quantity == null ? '' : detail.quantity);
+          html += card('BSP', detail.bspKey || detail.projectNumber);
+          html += card('Título', detail.title);
+          html += '</div>';
+          html += '<div class="drawing-revisions">';
+          html += revisionBlock('Revisão A', [
+            row('Drawings start date', revA.startDate),
+            row('Reviewer approval', revA.reviewerApproval),
+            row('Approver approval', revA.approverApproval),
+            row('Internally approved & sent to PM', revA.internallySentToPmDate),
+            row('PM approval', revA.pmApproval),
+            row('Approval Date', revA.approvalDate),
+            row('Status da aprovação', revA.approved ? 'Approved / Finalizado' : 'Em andamento ou pendente')
+          ]);
+          (detail.revisions || []).forEach(function (revision) {
+            html += revisionBlock('Revisão ' + revision.revision, [
+              row('Last client comments received via PM', revision.clientCommentsDate),
+              row('Last revision Update start', revision.updateStartDate),
+              row('Reviewer Update approval', revision.reviewerApproval),
+              row('Approver Update approval', revision.approverApproval),
+              row('Internally approved & sent to PM', revision.internallySentToPmDate),
+              row('PM approval', revision.pmApproval)
+            ]);
+          });
+          html += '</div>';
+          content.classList.remove('error');
+          content.innerHTML = html;
+        }
+        fetch('/api/drawing-detail?drawingNumber=' + encodeURIComponent(drawingNumber) + '&force=1', { credentials: 'same-origin', cache: 'no-store' })
+          .then(function (response) {
+            return response.text().then(function (text) {
+              var data = null;
+              var body = String(text || '').trim();
+              if (!body) {
+                throw new Error('API de Drawing retornou resposta vazia. Status HTTP: ' + response.status + '. Faça novo deploy com Clear cache e confirme se a função drawing-detail foi enviada.');
+              }
+              try {
+                data = JSON.parse(body);
+              } catch (parseError) {
+                throw new Error('API de Drawing retornou resposta não JSON. Status HTTP: ' + response.status + '. Retorno: ' + body.slice(0, 220));
+              }
+              if (!response.ok || !data.ok) {
+                var extra = '';
+                if (data.totalIndexed != null) extra += ' Itens indexados: ' + data.totalIndexed + '.';
+                if (Array.isArray(data.closest) && data.closest.length) extra += ' Próximos encontrados: ' + data.closest.map(function (x) { return x.drawingNumber; }).join(', ') + '.';
+                throw new Error((data.error || 'Detalhamento não encontrado.') + extra);
+              }
+              return data;
+            });
+          })
+          .then(function (data) { render(data.detail || {}); })
+          .catch(function (error) {
+            content.classList.add('error');
+            content.textContent = 'Não foi possível carregar o detalhamento de Drawing para ' + drawingNumber + ': ' + (error && error.message ? error.message : error);
+          });
+      })();
+    </script>` : ''}
 
     ${!isSpool ? `<section class="section"><h2>Tags / ISOs da obra</h2><table><thead><tr><th>Tag/ISO</th><th>Descrição</th><th>Status</th><th>%</th><th>Peso</th></tr></thead><tbody>${siblingRows || '<tr><td colspan="5">Nenhuma tag detalhada encontrada.</td></tr>'}</tbody></table></section>` : ''}
   </main>
@@ -4495,7 +5077,7 @@ function renderClientSpoolRows(spools, limit = 120, project = null) {
     const statusText = spool?.currentStatus || spool?.stage || uiStateLabel(spool?.uiState);
     const observationText = spool?.observations ? String(spool.observations).trim() : '—';
     const key = getClientSpoolPanelKey(spool, index);
-    return `<tr class="client-spool-row client-spool-row--${state} client-spool-row--clickable" data-client-spool-panel="${escapeHtml(key)}" data-client-spool-project-id="${escapeHtml(projectId)}" title="Clique para abrir o painel individual em uma nova aba"><td><strong>${escapeHtml(spool.iso || '—')}</strong></td><td>${escapeHtml(spool.description || '—')}</td><td>${escapeHtml(observationText)}</td><td><span class="client-spool-chip client-spool-chip--${state}">${escapeHtml(statusText)}</span></td><td>${escapeHtml(spool.currentSector || spool.operationalSector || '—')}</td><td><span class="client-spool-progress client-spool-progress--${state}">${formatPercent(spool.overallProgress)}</span></td><td>${formatNumber(spool.kilos, 2)} kg</td></tr>`;
+    return `<tr class="client-spool-row client-spool-row--${state} client-spool-row--clickable" data-client-spool-panel="${escapeHtml(key)}" data-client-spool-project-id="${escapeHtml(projectId)}" title="Clique para abrir o painel individual e o detalhamento de Drawing em uma nova aba"><td><strong>${escapeHtml(spool.iso || '—')}</strong></td><td>${escapeHtml(spool.description || '—')}</td><td>${escapeHtml(observationText)}</td><td><span class="client-spool-chip client-spool-chip--${state}">${escapeHtml(statusText)}</span></td><td>${escapeHtml(spool.currentSector || spool.operationalSector || '—')}</td><td><span class="client-spool-progress client-spool-progress--${state}">${formatPercent(spool.overallProgress)}</span></td><td>${formatNumber(spool.kilos, 2)} kg</td></tr>`;
   }).join('');
 }
 
@@ -4715,6 +5297,10 @@ function getClientTrackingDate(project, wantedKeys, mode = 'last') {
 function getClientTrackingDates(project, options = {}) {
   const hydro = shouldClientShowHydro(project);
   const trackingDates = {
+    drawingsStart: getClientTrackingDate(project, ['Drawing Start Date', 'Drawings Start Date', 'Engineering Start Date', 'Start Drawing Date'], 'first'),
+    drawingsFinish: getClientTrackingDate(project, ['Drawing Execution Advance%', 'Drawing Finish Date', 'Drawings Finish Date', 'Engineering Finish Date', 'Drawing'], 'last'),
+    procurementStart: getClientTrackingDate(project, ['Procurement Start Date', 'Procuremnt Start Date', 'Material Procurement Start Date', 'Materials Start Date'], 'first'),
+    procurementFinish: getClientTrackingDate(project, ['Procuremnt Status %', 'Procurement Status %', 'Procurement Finish Date', 'Material Separation', 'Material Release to Fabrication', 'Materials Finish Date'], 'last'),
     fabricationStart: getClientTrackingDate(project, ['Fabrication Start Date', 'Fab. Início', 'FAB INICIO', 'Fab Inicio'], 'first'),
     boilermakerFinish: getClientTrackingDate(project, ['Boilermaker Finish Date', 'Caldeiraria', 'Calderaria Finish Date'], 'last'),
     weldingFinish: getClientTrackingDate(project, ['Welding Finish Date', 'Solda', 'Weld Finish Date', 'Full Welding Finish Date'], 'last'),
@@ -4737,6 +5323,10 @@ function getClientTrackingDates(project, options = {}) {
       withOverrides.sources[targetKey] = 'PM';
     }
   };
+  applyDate('drawingsStart', 'drawingsStartOverride');
+  applyDate('drawingsFinish', 'drawingsFinishOverride');
+  applyDate('procurementStart', 'procurementStartOverride');
+  applyDate('procurementFinish', 'procurementFinishOverride');
   applyDate('fabricationStart', 'fabricationStartOverride');
   applyDate('boilermakerFinish', 'boilermakerFinishOverride');
   applyDate('weldingFinish', 'weldingFinishOverride');
@@ -5011,18 +5601,27 @@ function clientInferMissingExecutiveActualDates(rows) {
 function getClientSCurveActualMilestones(project) {
   const real = getClientTrackingDates(project);
   const hydro = shouldClientShowHydro(project);
+  // Escala dinâmica para a curva S: ajusta os percentuais conforme o progresso geral atual.
+  // Isso evita que uma única ISO com alto progresso cause saltos irreais na curva realizada.
+  const currentOverall = getClientOverallProgress(project);
+  // Garante fator de escala mínimo 0 para evitar NaN; se currentOverall for 0, escala vira 0.
+  const scaleFactor = Number.isFinite(currentOverall) && currentOverall > 0 ? (currentOverall / 100) : 0;
   // A Curva S precisa ser acumulada e sempre crescente.
   // Não usar o percentual atual das etapas antigas aqui, porque uma etapa anterior
   // já concluída em 100% fazia a linha realizada nascer em 100% e depois cair.
-  const inspectionPercent = hydro ? 72 : 82;
+  const baseInspectionPercent = hydro ? 72 : 82;
   const points = [
-    { date: real.fabricationStart, actual: 30, label: 'Fabrication Start' },
-    { date: real.boilermakerFinish, actual: 42, label: 'Boilermaker Finish' },
-    { date: real.weldingFinish, actual: 58, label: 'Welding Finish' },
-    { date: real.inspectionFinish, actual: inspectionPercent, label: 'Inspection Finish' },
-    { date: real.thFinish, actual: 84, label: 'TH Finish' },
-    { date: real.coatingFinish, actual: 92, label: 'Coating Finish' },
-    { date: real.projectFinish, actual: 100, label: 'Project Finish' },
+    { date: real.drawingsStart, actual: 0 * scaleFactor, label: 'Drawings Start' },
+    { date: real.drawingsFinish, actual: 12 * scaleFactor, label: 'Drawings Finish' },
+    { date: real.procurementStart, actual: 15 * scaleFactor, label: 'Procurement Start' },
+    { date: real.procurementFinish, actual: 25 * scaleFactor, label: 'Procurement Finish' },
+    { date: real.fabricationStart, actual: 30 * scaleFactor, label: 'Fabrication Start' },
+    { date: real.boilermakerFinish, actual: 42 * scaleFactor, label: 'Boilermaker Finish' },
+    { date: real.weldingFinish, actual: 58 * scaleFactor, label: 'Welding Finish' },
+    { date: real.inspectionFinish, actual: baseInspectionPercent * scaleFactor, label: 'Inspection Finish' },
+    { date: real.thFinish, actual: 84 * scaleFactor, label: 'TH Finish' },
+    { date: real.coatingFinish, actual: 92 * scaleFactor, label: 'Coating Finish' },
+    { date: real.projectFinish, actual: 100 * scaleFactor, label: 'Project Finish' },
   ].filter((item) => item.date && (hydro || item.label !== 'TH Finish'));
 
   const byDate = new Map();
@@ -5282,8 +5881,99 @@ function getClientDatabookProgress(project) {
   ]);
 }
 
+/**
+ * Computes the package/delivery progress for a project based on its spools.
+ *
+ * Historically this function returned the maximum value of the
+ * "Package and Delivered" and "Final Inspection" stages recorded on the
+ * summary row of a BSP. This caused a single spool with progress in the
+ * final stages to mark the entire BSP as completed, even when the vast
+ * majority of spools had not progressed beyond unitization. To provide
+ * a more representative metric, we now calculate a weighted average of
+ * the packaging progress across all spools. Each spool contributes
+ * proportionally to its weight (kilos) and spools without a defined
+ * weight are treated with weight 1. This ensures the overall delivery
+ * progress reflects the state of all spools rather than a single outlier.
+ *
+ * If no spools are available, the function falls back to the summary
+ * stage value for "Package and Delivered".
+ *
+ * @param {Object} project The project (BSP) object containing spools and stage values.
+ * @returns {number} The weighted percentage (0-100) of the packaging stage.
+ */
 function getClientPackageProgress(project) {
-  return getClientStageValue(project, ['Package and Delivered', 'Final Inspection']);
+  // If there are spools, compute weighted average of packaging progress across them
+  const spools = Array.isArray(project?.spools) ? project.spools : [];
+  if (spools.length > 0) {
+    let totalWeight = 0;
+    let weightedSum = 0;
+    for (const spool of spools) {
+      const weight = Number(spool.kilos) || 1;
+      totalWeight += weight;
+      // Determine spool's packaging progress. We ignore the final inspection
+      // when computing delivery progress so that only unitization progress
+      // influences the result. Use getClientStageValue on the spool to parse
+      // percentage strings (e.g. "95%") into numbers.
+      const spoolProgress = getClientStageValue(spool, ['Package and Delivered']);
+      weightedSum += spoolProgress * weight;
+    }
+    return totalWeight > 0 ? (weightedSum / totalWeight) : 0;
+  }
+  // Fall back to project-level stage value if no spools are available
+  return getClientStageValue(project, ['Package and Delivered']);
+}
+
+/**
+ * Computes the packing progress across all spools based on the
+ * "Package and Delivered" stage. Each spool contributes according to its
+ * weight (kilos), or 1 if not specified. If no spools are present, the
+ * value from the project's summary row is used. This ensures the "Packing"
+ * row in the schedule reflects the proportion of ISOs that have reached
+ * the unitization/dispatch stage.
+ *
+ * @param {Object} project The project (BSP) with spools and stage values.
+ * @returns {number} The weighted percentage (0-100) of packing progress.
+ */
+function getClientPackingProgress(project) {
+  const spools = Array.isArray(project?.spools) ? project.spools : [];
+  if (spools.length > 0) {
+    let totalWeight = 0;
+    let weightedSum = 0;
+    for (const spool of spools) {
+      const weight = Number(spool.kilos) || 1;
+      totalWeight += weight;
+      const progress = getClientStageValue(spool, ['Package and Delivered']);
+      weightedSum += progress * weight;
+    }
+    return totalWeight > 0 ? (weightedSum / totalWeight) : 0;
+  }
+  return getClientStageValue(project, ['Package and Delivered']);
+}
+
+/**
+ * Computes the final inspection progress across all spools. Each spool
+ * contributes according to its weight (kilos), or 1 if unspecified. When no
+ * spools exist, falls back to the project's summary row value. This
+ * calculation ensures the "Final Inspection" row of the schedule uses the
+ * average progress of all ISOs instead of a single spool's completion.
+ *
+ * @param {Object} project The project (BSP) with spools and stage values.
+ * @returns {number} The weighted percentage (0-100) of final inspection progress.
+ */
+function getClientFinalInspectionProgress(project) {
+  const spools = Array.isArray(project?.spools) ? project.spools : [];
+  if (spools.length > 0) {
+    let totalWeight = 0;
+    let weightedSum = 0;
+    for (const spool of spools) {
+      const weight = Number(spool.kilos) || 1;
+      totalWeight += weight;
+      const progress = getClientStageValue(spool, ['Final Inspection']);
+      weightedSum += progress * weight;
+    }
+    return totalWeight > 0 ? (weightedSum / totalWeight) : 0;
+  }
+  return getClientStageValue(project, ['Final Inspection']);
 }
 
 function getClientProductionStages(project) {
@@ -5837,14 +6527,30 @@ function renderClientSCurveSvg(project) {
   `, width);
 }
 
+function isClientDeviationActive(deadlineDate) {
+  const deadline = parseDateObject(deadlineDate);
+  if (!deadline) return true;
+  const today = new Date();
+  const utcToday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  return utcToday.getTime() > deadline.getTime();
+}
+
+function getClientVisibleDeviationPercent(actualPercent, plannedPercent, deadlineDate = null) {
+  if (!isClientDeviationActive(deadlineDate)) return 0;
+  return Math.max(0, clampClientPercent(plannedPercent) - clampClientPercent(actualPercent));
+}
+
 function renderClientGauge(percent, label, plannedPercent = null, options = {}) {
   const p = clampClientPercent(percent);
   const plannedBase = plannedPercent == null ? p : clampClientPercent(plannedPercent);
-  const planned = Math.max(p, plannedBase);
-  const deviation = Math.max(0, planned - p);
+  const deviationActive = isClientDeviationActive(options?.deadlineDate || null);
+  const planned = deviationActive ? Math.max(p, plannedBase) : p;
+  const deviation = deviationActive ? Math.max(0, planned - p) : 0;
   const deliveryDate = options?.deliveryDate ? clientFormatDateValue(options.deliveryDate) : '';
   const noteText = options?.note ? String(options.note) : '';
-  const ringStyle = `background: conic-gradient(#0b9b7a 0 ${p}%, #efc14f ${p}% ${planned}%, #d4dce2 ${planned}% 100%)`;
+  const ringStyle = deviationActive
+    ? `background: conic-gradient(#0b9b7a 0 ${p}%, #efc14f ${p}% ${planned}%, #d4dce2 ${planned}% 100%)`
+    : `background: conic-gradient(#0b9b7a 0 ${p}%, #d4dce2 ${p}% 100%)`;
   return `
     <div class="client-exec-gauge" style="--p:${p}">
       <div class="client-exec-gauge-ring" style="${ringStyle}"></div>
@@ -5947,12 +6653,12 @@ function scaleDurationVector(baseItems, targetTotal) {
   return baseItems.map((item) => rows.find((row) => row.key === item.key) || { ...item, duration: Math.max(1, Number(item.base || 1)) });
 }
 
-function buildClientExecutiveSchedule(project) {
-  const start = getClientAnalyticStartDate(project);
-  const finish = getClientAnalyticFinishDate(project) || getProjectShipmentDate(project);
+function buildClientExecutiveSchedule(project, options = {}) {
+  const start = parseDateObject(options.start) || getClientAnalyticStartDate(project);
+  const finish = parseDateObject(options.finish) || getClientAnalyticFinishDate(project) || getProjectShipmentDate(project);
   const totalBusinessDays = Math.max(5, countBusinessDaysInclusive(start, finish) || 116);
-  const realDates = getClientTrackingDates(project);
-  const hasRealFabricationDates = Boolean(realDates.fabricationStart || realDates.boilermakerFinish || realDates.weldingFinish || realDates.inspectionFinish || realDates.thFinish || realDates.coatingFinish);
+  const realDates = options.realDates || getClientTrackingDates(project);
+  const hasRealFabricationDates = Boolean(realDates.drawingsStart || realDates.drawingsFinish || realDates.procurementStart || realDates.procurementFinish || realDates.fabricationStart || realDates.boilermakerFinish || realDates.weldingFinish || realDates.inspectionFinish || realDates.thFinish || realDates.coatingFinish);
 
   const groupTemplate = [
     { key: 'engineering', label: 'ENGINEERING', base: 15, percent: getClientStageValue(project, ['Drawing Execution Advance%', 'Drawing']) },
@@ -5972,14 +6678,19 @@ function buildClientExecutiveSchedule(project) {
     { key: 'painting', label: 'Painting', base: 14, percent: getClientStageValue(project, ['Surface preparation and/or coating', 'HDG / FBE.  (PAINT)']) },
   ].filter((item) => !item.spoolOnly || shouldClientShowHydro(project));
   const logisticsTemplate = [
-    { key: 'packing', label: 'Packing', base: 1, percent: getClientStageValue(project, ['Package and Delivered']) },
-    { key: 'final-inspection', label: 'Final Inspection', base: 1, percent: getClientStageValue(project, ['Final Inspection']) },
+    // "Packing" reflects the unitization and dispatch stage (Package and Delivered).
+    // "Packing" reflects the weighted average of unitization/dispatch across spools.
+    { key: 'packing', label: 'Packing', base: 1, percent: getClientPackingProgress(project) },
+    // "Final Inspection" reflects the weighted average of final inspection progress across spools.
+    { key: 'final-inspection', label: 'Final Inspection', base: 1, percent: getClientFinalInspectionProgress(project) },
+    // "Delivery" row reflects the aggregated packaging progress across spools.
     { key: 'delivery', label: 'Delivery', base: 1, percent: getClientPackageProgress(project) },
   ];
   const fabricationGroup = groupDurations.find((item) => item.key === 'fabrication');
   const deliveryGroup = groupDurations.find((item) => item.key === 'delivery');
   const fabricationDurations = scaleDurationVector(fabricationTemplate, fabricationGroup?.duration || 81);
   const logisticsDurations = scaleDurationVector(logisticsTemplate, deliveryGroup?.duration || 3);
+  const scheduleFallbackPercents = getClientScheduleFallbackPercents(project);
 
   const rows = [];
   let cursor = parseDateObject(start) || parseDateObject(getProjectShipmentDate(project)) || new Date();
@@ -6009,9 +6720,21 @@ function buildClientExecutiveSchedule(project) {
     cursor = addBusinessDaysUtc(groupFinish, 1) || groupFinish;
   }
 
-  if (!hasRealFabricationDates) return applyClientExecutiveScheduleReplan(project, rows);
+  if (!hasRealFabricationDates) return options.skipReplan ? rows : applyClientExecutiveScheduleReplan(project, rows);
 
   const rowsWithTracking = rows.map((row) => {
+    if (row.key === 'engineering' || row.key === 'drawings') {
+      if (realDates.drawingsStart || realDates.drawingsFinish) {
+        return clientApplyRowDates(row, realDates.drawingsStart, realDates.drawingsFinish, realDates.sources?.drawingsStart || realDates.sources?.drawingsFinish || 'PM');
+      }
+      return row;
+    }
+    if (row.key === 'procurement' || row.key === 'materials') {
+      if (realDates.procurementStart || realDates.procurementFinish) {
+        return clientApplyRowDates(row, realDates.procurementStart, realDates.procurementFinish, realDates.sources?.procurementStart || realDates.sources?.procurementFinish || 'PM');
+      }
+      return row;
+    }
     if (row.key === 'fabrication') {
       const fabFinish = clientLatestDate(realDates.coatingFinish, realDates.thFinish, realDates.inspectionFinish, realDates.weldingFinish, realDates.boilermakerFinish);
       return clientApplyRowDates(row, realDates.fabricationStart, fabFinish, realDates.sources?.fabricationStart || realDates.sources?.coatingFinish || realDates.sources?.thFinish || realDates.sources?.inspectionFinish || realDates.sources?.weldingFinish || realDates.sources?.boilermakerFinish || 'Tracking');
@@ -6029,31 +6752,77 @@ function buildClientExecutiveSchedule(project) {
     return row;
   });
 
-  const rowsWithEstimatedActuals = clientInferMissingExecutiveActualDates(rowsWithTracking);
-  return applyClientExecutiveScheduleReplan(project, rowsWithEstimatedActuals);
+  const rowsWithEstimatedActuals = clientInferMissingExecutiveActualDates(rowsWithTracking).map((row) => {
+    const next = { ...row };
+    if (next.key === 'fitup' && clampClientPercent(next.progress) <= 0) {
+      if (scheduleFallbackPercents.fitup > 0) next.progress = scheduleFallbackPercents.fitup;
+      else if (clientHasExecutedStart(next) || clientHasExecutedFinish(next)) next.progress = 1;
+    }
+    if (next.key === 'fabrication' && clampClientPercent(next.progress) <= 0) {
+      if (scheduleFallbackPercents.fabrication > 0) next.progress = scheduleFallbackPercents.fabrication;
+      else if (clientHasExecutedStart(next) || clientHasExecutedFinish(next)) next.progress = 1;
+    }
+    return next;
+  });
+
+  const fitupRow = rowsWithEstimatedActuals.find((row) => row.key === 'fitup');
+  const fabricationRow = rowsWithEstimatedActuals.find((row) => row.key === 'fabrication');
+  if (fabricationRow) {
+    const childProgressMax = rowsWithEstimatedActuals
+      .filter((row) => row.type === 'child' && ['fitup', 'initial-dimensional', 'weld', 'nde', 'final-dimensional', 'hydro', 'painting'].includes(row.key))
+      .reduce((max, row) => Math.max(max, clampClientPercent(row.progress)), 0);
+    if (childProgressMax > clampClientPercent(fabricationRow.progress)) fabricationRow.progress = childProgressMax;
+    if (clampClientPercent(fabricationRow.progress) <= 0 && (clientHasExecutedStart(fabricationRow) || (fitupRow && clampClientPercent(fitupRow.progress) > 0))) fabricationRow.progress = Math.max(1, clampClientPercent(fitupRow?.progress || 0));
+  }
+
+  return options.skipReplan ? rowsWithEstimatedActuals : applyClientExecutiveScheduleReplan(project, rowsWithEstimatedActuals);
 }
 
-function getClientScheduleVisualState(progress) {
+function getClientScheduleFallbackPercents(project) {
+  const spools = Array.isArray(project?.spools) ? project.spools : [];
+  const total = spools.length || 0;
+  if (!total) return { fitup: 0, fabrication: 0 };
+
+  const reachedFitupOrBeyond = spools.filter((spool) => {
+    const directText = normalizeStageWorkspaceText([
+      spool?.currentStatus,
+      spool?.stage,
+      spool?.currentSector,
+      spool?.operationalSector,
+      spool?.flow?.status,
+      spool?.flow?.sector,
+      spool?.etapaAtual,
+    ].filter(Boolean).join(' '));
+    if (directText.includes('fit up') || directText.includes('spool assemble') || directText.includes('tack weld') || directText.includes('welding preparation')) return true;
+    const sector = getSpoolCompetenceSector(project, spool);
+    return ['calderaria', 'solda', 'inspecao', 'pintura', 'pendente_envio'].includes(sector) || isClientSpoolFinished(spool);
+  }).length;
+
+  const percent = clampClientPercent((reachedFitupOrBeyond / total) * 100);
+  return { fitup: percent, fabrication: percent };
+}
+
+function getClientScheduleVisualState(progress, row = null) {
   const value = clampClientPercent(progress);
   if (value >= 99.9) return 'completed';
-  if (value <= 0) return 'not-started';
-  return 'in-progress';
+  if (value > 0) return 'in-progress';
+  if (row && (clientHasExecutedStart(row) || clientHasExecutedFinish(row))) return 'in-progress';
+  return 'not-started';
 }
 
-function renderClientExecutiveSchedule(project) {
-  const rows = buildClientExecutiveSchedule(project);
-  if (!rows.length) return '<div class="client-empty-state">Schedule não disponível para esta BSP.</div>';
+function renderClientExecutiveScheduleRows(rows, emptyText = 'Schedule não disponível para esta BSP.') {
+  if (!rows.length) return `<div class="client-empty-state">${escapeHtml(emptyText)}</div>`;
   return `
     <div class="client-table-wrap client-table-wrap--compact client-exec-schedule-table">
       <table class="client-bsp-table client-bsp-table--schedule">
         <thead><tr><th>Etapa</th><th>%</th><th>Prazo médio</th><th>Início</th><th>Término</th><th>Status</th></tr></thead>
         <tbody>
           ${rows.map((row) => {
-            const state = getClientScheduleVisualState(row.progress);
+            const state = getClientScheduleVisualState(row.progress, row);
             const label = row.type === 'group' ? `<strong>${escapeHtml(row.label)}</strong>` : `<span class="client-schedule-child">${escapeHtml(row.label)}</span>`;
             const startCell = `${formatClientDateShort(row.start)}${row.plannedStart ? `<small class="client-planned-date">Plan.: ${formatClientDateShort(row.plannedStart)}</small>` : ''}`;
             const finishCell = `${formatClientDateShort(row.finish)}${row.plannedFinish ? `<small class="client-planned-date">Plan.: ${formatClientDateShort(row.plannedFinish)}</small>` : ''}`;
-            const deviationText = Number.isFinite(row.deviationDays) && row.deviationDays !== 0 ? ` • ${row.deviationDays > 0 ? '+' : ''}${row.deviationDays}d` : '';
+            const deviationText = Number.isFinite(row.deviationDays) && row.deviationDays > 0 ? ` • +${row.deviationDays}d` : '';
             const statusText = state === 'completed' ? 'Concluído' : state === 'in-progress' ? 'Em andamento' : 'Não iniciado';
             return `<tr class="client-schedule-row client-schedule-row--${state} client-schedule-row--${row.type}"><td>${label}</td><td><span class="client-spool-progress client-spool-progress--${state}">${formatPercent(row.progress)}</span></td><td>${formatNumber(row.duration, 0)}d</td><td>${startCell}</td><td>${finishCell}</td><td><span class="client-spool-chip client-spool-chip--${state}">${statusText}${deviationText}</span></td></tr>`;
           }).join('')}
@@ -6061,6 +6830,10 @@ function renderClientExecutiveSchedule(project) {
       </table>
     </div>
   `;
+}
+
+function renderClientExecutiveSchedule(project) {
+  return renderClientExecutiveScheduleRows(buildClientExecutiveSchedule(project), 'Schedule não disponível para esta BSP.');
 }
 
 
@@ -6172,6 +6945,10 @@ function renderClientBspOverrideEditor(project) {
       </div>
       <form class="client-pm-editor-form" data-client-bsp-override-form="${escapeHtml(project.rowId)}">
         <div class="client-pm-date-grid">
+          ${field('drawingsStartOverride', 'Drawings Start Date', tracking.drawingsStart, override.drawingsStartOverride)}
+          ${field('drawingsFinishOverride', 'Drawings Finish Date', tracking.drawingsFinish, override.drawingsFinishOverride)}
+          ${field('procurementStartOverride', 'Procurement Start Date', tracking.procurementStart, override.procurementStartOverride)}
+          ${field('procurementFinishOverride', 'Procurement Finish Date', tracking.procurementFinish, override.procurementFinishOverride)}
           ${field('fabricationStartOverride', 'Fabrication Start Date', tracking.fabricationStart, override.fabricationStartOverride)}
           ${field('boilermakerFinishOverride', 'Boilermaker Finish Date', tracking.boilermakerFinish, override.boilermakerFinishOverride)}
           ${field('weldingFinishOverride', 'Welding Finish Date', tracking.weldingFinish, override.weldingFinishOverride)}
@@ -6198,12 +6975,22 @@ function renderClientBspOverrideEditor(project) {
   `;
 }
 
-function collectClientBspOverrideForm(form) {
+function collectClientBspOverrideForm(form, project = null) {
   const fd = new FormData(form);
   const customLabel = String(fd.get('customFieldLabel') || '').trim();
   const customValue = String(fd.get('customFieldValue') || '').trim();
-  const customFields = customLabel || customValue ? { [customLabel || 'Campo adicional']: customValue } : {};
   const val = (key) => String(fd.get(key) || '').trim();
+  const existingOverride = project ? getClientBspOverride(project) : null;
+  const existingCustom = existingOverride?.customFields && typeof existingOverride.customFields === 'object' ? existingOverride.customFields : {};
+  const customFields = {};
+  if (existingCustom.__isoDateOverrides && typeof existingCustom.__isoDateOverrides === 'object') {
+    customFields.__isoDateOverrides = existingCustom.__isoDateOverrides;
+  }
+  customFields.__drawingsStartOverride = val('drawingsStartOverride');
+  customFields.__drawingsFinishOverride = val('drawingsFinishOverride');
+  customFields.__procurementStartOverride = val('procurementStartOverride');
+  customFields.__procurementFinishOverride = val('procurementFinishOverride');
+  if (customLabel || customValue) customFields[customLabel || 'Campo adicional'] = customValue;
   return {
     fabricationStartOverride: val('fabricationStartOverride'),
     boilermakerFinishOverride: val('boilermakerFinishOverride'),
@@ -6236,7 +7023,7 @@ async function saveClientBspOverride(project, form) {
         clientName: getProjectClientLabel(project),
         vessel: getProjectVesselLabel(project),
         pm: project.pm || '',
-        ...collectClientBspOverrideForm(form),
+        ...collectClientBspOverrideForm(form, project),
       }),
     });
     const data = await response.json().catch(() => null);
@@ -6348,6 +7135,56 @@ function ensureClientBspExecutiveModalEl() {
     if (event.target.closest('[data-client-bsp-clear-override]')) {
       const project = state.projects.find((item) => String(item.rowId) === String(state.clientBspOverrides.activeExecutiveProjectId));
       if (project) clearClientBspOverride(project);
+      return;
+    }
+    const uploadImageButton = event.target.closest('[data-client-bsp-upload-image]');
+    if (uploadImageButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const rowId = uploadImageButton.dataset.clientBspUploadImage;
+      const project = state.projects.find((item) => String(item.rowId) === String(rowId));
+      if (!project || !canManageClientBspPanel(project)) {
+        alert('A importação de imagem é restrita ao administrador e ao PM responsável pela BSP.');
+        return;
+      }
+      openClientBspUploadImageModal(rowId);
+      return;
+    }
+    // Novo botão para carregar imagens da BSP. Ao clicar, abre um modal
+    // interno com as imagens associadas à BSP. Não abre uma nova guia,
+    // pois o carregamento das imagens é assíncrono e ocorre somente
+    // quando o usuário clicar no botão. O rowId é passado para a
+    // função que monta e exibe o modal.
+    const imagesButton = event.target.closest('[data-client-bsp-images]');
+    if (imagesButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const rowId = imagesButton.dataset.clientBspImages;
+      // Prepare row numbers and row IDs of spools for this BSP.  The
+      // attachments may be located on child spool rows as well, so we
+      // include them when present.  If the sheet ID of the project is
+      // available via project.sheetId (not currently defined), it can
+      // be passed to the modal as well.
+      let spoolRowNumbers = [];
+      let spoolRowIds = [];
+      let sheetIdForProject = null;
+      try {
+        const proj = state.projects && state.projects.find((item) => String(item.rowId) === String(rowId));
+        if (proj) {
+          if (Array.isArray(proj.spools)) {
+            for (const sp of proj.spools) {
+              if (sp && sp.rowNumber != null) spoolRowNumbers.push(sp.rowNumber);
+              if (sp && sp.rowId != null) spoolRowIds.push(sp.rowId);
+            }
+          }
+          // If the project object ever includes a sheetId field in the
+          // future, forward it to the modal.  This remains null for now.
+          if (proj.sheetId) sheetIdForProject = proj.sheetId;
+        }
+      } catch (err) {
+        console.error(err);
+      }
+      openClientBspImagesModal(rowId, spoolRowNumbers, spoolRowIds, sheetIdForProject);
       return;
     }
     if (event.target.closest('[data-client-exec-close]')) closeClientBspExecutive();
@@ -7018,7 +7855,7 @@ function openClientMacroExecutive(projects = state.projects, options = {}) {
   const stages = getClientMacroProductionStages(list);
   const attention = getClientMacroAttentionPoints(list);
   const range = getClientMacroDateRange(list);
-  const deviationPercent = Math.max(0, plannedToday - overall);
+  const deviationPercent = getClientVisibleDeviationPercent(overall, plannedToday, range.finish);
   const vesselGroups = getClientVesselGroups(list);
   const finishedBsps = list.filter((project) => getClientOverallProgress(project) >= 99.9 || isProjectFinishedForTotal(project)).length;
   const pendingBsps = Math.max(0, totals.bsps - finishedBsps);
@@ -7054,11 +7891,11 @@ function openClientMacroExecutive(projects = state.projects, options = {}) {
     <div class="client-exec-grid client-exec-grid--top">
       <section class="client-exec-card">
         <div class="client-exec-card-head"><h3>Overall Progress</h3><span>${isUnitScope ? 'Unidade consolidada + desvio' : 'Carteira geral + desvio'}</span></div>
-        ${renderClientGauge(overall, isUnitScope ? 'unidade' : 'carteira', plannedToday, { note: 'Meta macro até hoje' })}
+        ${renderClientGauge(overall, isUnitScope ? 'unidade' : 'carteira', plannedToday, { note: 'Meta macro até hoje', deadlineDate: range.finish })}
       </section>
       <section class="client-exec-card">
         <div class="client-exec-card-head"><h3>Fabrication Progress</h3><span>${isUnitScope ? 'Fabricação ponderada da unidade' : 'Fabricação ponderada da carteira'}</span></div>
-        ${renderClientGauge(fabrication, 'fabricação', plannedToday, { note: 'Meta macro até hoje' })}
+        ${renderClientGauge(fabrication, 'fabricação', plannedToday, { note: 'Meta macro até hoje', deadlineDate: range.finish })}
       </section>
       <section class="client-exec-card client-exec-card--bars">
         <div class="client-exec-card-head"><h3>Progress by Production Stage</h3><span>${isUnitScope ? 'Etapas principais da unidade' : 'Etapas principais da carteira'}</span></div>
@@ -7150,7 +7987,7 @@ function openClientBspExecutive(project, options = {}) {
   const startDate = clientFormatDateValue(getClientAnalyticStartDate(project));
   const finishDate = clientFormatDateValue(getClientAnalyticFinishDate(project));
   const shipmentDate = clientFormatDateValue(getProjectShipmentDate(project));
-  const deviationPercent = Math.max(0, plannedToday - overall);
+  const deviationPercent = getClientVisibleDeviationPercent(overall, plannedToday, finishDate);
   const stageValues = project.stageValues || {};
   const spools = Array.isArray(project.spools) ? project.spools : [];
   const detailStageKeys = getClientDetailStageKeys(project);
@@ -7165,6 +8002,9 @@ function openClientBspExecutive(project, options = {}) {
           <button class="client-exec-pdf-button" type="button" data-client-download-pdf data-client-report-type="project" data-client-report-project-id="${escapeHtml(project.rowId)}">Baixar PDF</button>
           <button class="client-exec-pdf-button client-exec-report-button" type="button" data-client-download-report="${escapeHtml(project.rowId)}">Baixar Excel do Cronograma</button>
           ${canManageClientBspPanel(project) ? `<button class="client-exec-pdf-button client-exec-edit-button" type="button" data-client-bsp-edit="${escapeHtml(project.rowId)}">Editar datas / informações</button>` : ''}
+          <!-- Botões de imagens da BSP: cliente apenas visualiza; importação fica restrita a admin/PM -->
+          <button class="client-exec-pdf-button client-exec-images-button" type="button" data-client-bsp-images="${escapeHtml(project.rowId)}">Imagens</button>
+          ${canManageClientBspPanel(project) ? `<button class="client-exec-pdf-button client-exec-upload-image-button" type="button" data-client-bsp-upload-image="${escapeHtml(project.rowId)}">Importar imagem</button>` : ''}
         </div>
       </div>
       <div class="client-exec-dates">
@@ -7195,11 +8035,11 @@ function openClientBspExecutive(project, options = {}) {
     <div class="client-exec-grid client-exec-grid--top">
       <section class="client-exec-card">
         <div class="client-exec-card-head"><h3>Overall Progress</h3><span>Concluído x restante + desvio</span></div>
-        ${renderClientGauge(overall, 'concluído', plannedToday, { deliveryDate: shipmentDate, note: 'Meta até hoje' })}
+        ${renderClientGauge(overall, 'concluído', plannedToday, { deliveryDate: shipmentDate, note: 'Meta até hoje', deadlineDate: finishDate })}
       </section>
       <section class="client-exec-card">
         <div class="client-exec-card-head"><h3>Fabrication Progress</h3><span>Fabricação ponderada + desvio</span></div>
-        ${renderClientGauge(fabrication, 'fabricação', plannedToday, { note: 'Meta até hoje' })}
+        ${renderClientGauge(fabrication, 'fabricação', plannedToday, { note: 'Meta até hoje', deadlineDate: finishDate })}
       </section>
       <section class="client-exec-card client-exec-card--bars">
         <div class="client-exec-card-head"><h3>Progress by Production Stage</h3><span>Etapas principais</span></div>
@@ -7447,6 +8287,483 @@ function openClientApiModal() {
   loadClientApiKeys();
 }
 
+/**
+ * Abre uma nova guia para listar projetos em desenvolvimento (pré‑BSP) do cliente.
+ * Atualmente o recurso foi criado apenas para o cliente Yinson e usa a página
+ * client-under-development.html localizada em /site.
+ */
+function openClientUnderDevPage() {
+  if (!isClientUser()) return;
+  // A página nova é aberta em outra guia para que o usuário não perca o contexto do painel.
+  // Abre a página estática em uma nova aba. Usamos um caminho relativo sem './' para garantir
+  // que o arquivo raiz do site seja resolvido corretamente em ambientes Netlify/SPA.
+  window.open('client-under-development.html', '_blank');
+}
+
+/**
+ * Garante que o modal de imagens da BSP exista no DOM e retorna sua referência.
+ * Este modal é criado dinamicamente apenas na primeira vez que for necessário.
+ * Ele contém uma tabela para listar os anexos de imagem e um viewer para
+ * visualizar cada imagem individualmente. Fechar o modal remove a classe
+ * `client-bsp-images-open` do body para restaurar a rolagem.
+ */
+function ensureClientBspImagesModalEl() {
+  let modal = document.getElementById('client-bsp-images-modal');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'client-bsp-images-modal';
+  modal.className = 'client-bsp-images-modal';
+  modal.innerHTML = `
+    <div class="client-bsp-images-dialog" role="dialog" aria-modal="true" aria-label="Imagens da BSP">
+      <div class="client-bsp-images-header">
+        <h2>Imagens da BSP</h2>
+        <button type="button" class="client-bsp-images-close" aria-label="Fechar">×</button>
+      </div>
+      <div class="client-bsp-images-progress-container" hidden>
+        <div class="client-bsp-images-progress-bar"></div>
+      </div>
+      <div class="client-bsp-images-content">
+        <table class="client-bsp-images-table">
+          <thead>
+            <tr>
+              <th>Arquivo</th>
+              <th>Ação</th>
+            </tr>
+          </thead>
+          <tbody id="client-bsp-images-body">
+            <tr><td colspan="2" class="client-bsp-images-placeholder">Carregando imagens…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <!-- Viewer para imagem selecionada, com navegação -->
+      <div id="client-bsp-img-viewer" class="client-bsp-img-viewer">
+        <button type="button" class="client-bsp-image-prev" aria-label="Imagem anterior">‹</button>
+        <img id="client-bsp-img" src="" alt="" />
+        <button type="button" class="client-bsp-image-next" aria-label="Próxima imagem">›</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  // Close handlers
+  const closeBtn = modal.querySelector('.client-bsp-images-close');
+  closeBtn.addEventListener('click', () => closeClientBspImagesModal());
+  // Fechar clicando fora do diálogo
+  modal.addEventListener('click', (ev) => {
+    if (ev.target === modal) closeClientBspImagesModal();
+  });
+  // Fechar viewer quando clicado nele
+  const viewer = modal.querySelector('#client-bsp-img-viewer');
+  viewer.addEventListener('click', () => {
+    viewer.classList.remove('active');
+    const imgEl = modal.querySelector('#client-bsp-img');
+    if (imgEl) imgEl.src = '';
+  });
+  // Navigation buttons inside the viewer. Use event.stopPropagation() to
+  // prevent closing the viewer when clicking on navigation controls.
+  const prevBtn = viewer.querySelector('.client-bsp-image-prev');
+  const nextBtn = viewer.querySelector('.client-bsp-image-next');
+  if (prevBtn) {
+    prevBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      showPrevClientBspImage();
+    });
+  }
+  if (nextBtn) {
+    nextBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      showNextClientBspImage();
+    });
+  }
+  return modal;
+}
+
+/**
+ * Abre o modal de imagens da BSP e carrega os anexos de imagem via API. O
+ * carregamento é assíncrono: exibe uma barra de progresso enquanto busca os
+ * dados. Após carregar, popula a tabela com as imagens disponíveis. Cada
+ * imagem possui um botão "Ver" que abre o arquivo no viewer interno. Caso
+ * não haja imagens, exibe uma mensagem no lugar da tabela. Erros durante
+ * a busca também são tratados com mensagem.
+ *
+ * @param {string} rowId O identificador da linha/BSP no Smartsheet.
+ */
+/**
+ * Abre o modal de imagens da BSP e carrega os anexos de imagem. Além do
+ * identificador da linha da BSP (`rowId`), aceita listas opcionais de
+ * números de linha (`spoolRowNumbers`) e identificadores de linha
+ * (`spoolRowIds`) para incluir anexos dos spools. Também pode receber o
+ * identificador de planilha (`sheetId`) para forçar a busca em uma
+ * planilha específica. Ao montar a URL de chamada, adiciona apenas os
+ * parâmetros que possuem valores.
+ *
+ * @param {string|number} rowId - ID da linha da BSP
+ * @param {number[]} [spoolRowNumbers=[]] - Lista de números de linha das linhas de spool
+ * @param {string[]} [spoolRowIds=[]] - Lista de IDs das linhas de spool
+ * @param {string|null} [sheetId=null] - ID da planilha Smartsheet (opcional)
+ */
+function openClientBspImagesModal(rowId, spoolRowNumbers = [], spoolRowIds = [], sheetId = null) {
+  const modal = ensureClientBspImagesModalEl();
+  modal.classList.add('active');
+  document.body.classList.add('client-bsp-images-open');
+  const progressContainer = modal.querySelector('.client-bsp-images-progress-container');
+  const progressBar = modal.querySelector('.client-bsp-images-progress-bar');
+  const tbody = modal.querySelector('#client-bsp-images-body');
+  // Reset viewer state
+  const viewer = modal.querySelector('#client-bsp-img-viewer');
+  if (viewer) viewer.classList.remove('active');
+  const imgEl = modal.querySelector('#client-bsp-img');
+  if (imgEl) imgEl.src = '';
+  // Show loading placeholder and progress
+  tbody.innerHTML = '<tr><td colspan="2" class="client-bsp-images-placeholder">Carregando imagens…</td></tr>';
+  progressContainer.hidden = false;
+  progressBar.style.width = '0%';
+  // Simple progress bar that animates up to 90% until the fetch completes
+  let percent = 0;
+  const timer = setInterval(() => {
+    percent = Math.min(percent + Math.random() * 10, 90);
+    progressBar.style.width = percent + '%';
+  }, 200);
+  // Build query string for API call. Executive BSP images must be pulled
+  // from the tracking sheet only (a sheet configurada do Tracking PT). The Yinson development
+  // page uses its own endpoint and is not affected by this request.
+  let url = `/api/client-bsp-images?rowId=${encodeURIComponent(rowId)}`;
+  if (Array.isArray(spoolRowNumbers) && spoolRowNumbers.length) {
+    const numbersParam = spoolRowNumbers.map((n) => String(n).trim()).filter(Boolean).join(',');
+    if (numbersParam) url += `&rowNumbers=${encodeURIComponent(numbersParam)}`;
+  }
+  // Prefer rowNumbers for child rows to keep the URL shorter and avoid invalid rowId batches.
+  // Use rowIds only when rowNumbers are not available.
+  if ((!Array.isArray(spoolRowNumbers) || !spoolRowNumbers.length) && Array.isArray(spoolRowIds) && spoolRowIds.length) {
+    const idsParam = spoolRowIds.map((id) => String(id).trim()).filter(Boolean).join(',');
+    if (idsParam) url += `&rowIds=${encodeURIComponent(idsParam)}`;
+  }
+  const executiveSheetId = sheetId || '';
+  if (executiveSheetId) url += `&sheetId=${encodeURIComponent(executiveSheetId)}`;
+  // Fetch images from Netlify function
+  fetch(url, { cache: 'no-store' })
+    .then((res) => {
+      if (!res.ok) throw new Error('Erro ao carregar imagens');
+      return res.json();
+    })
+    .then((json) => {
+      const images = Array.isArray(json?.images) ? json.images : [];
+      tbody.innerHTML = '';
+      // Guardar a lista de imagens no modal para navegação subsequente
+      modal._bspImages = images;
+      modal._currentImageIndex = 0;
+      images.forEach((img, idx) => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${escapeHtml(String(img.name || ''))}</td>
+          <td><button type="button" class="client-bsp-image-view-link" data-attachment-id="${escapeHtml(String(img.id))}" data-attachment-name="${escapeHtml(String(img.name || 'Imagem'))}" data-sheet-id="${escapeHtml(String(img.sheetId || ''))}" data-image-index="${idx}">Ver</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+      if (!images.length) {
+        tbody.innerHTML = '<tr><td colspan="2" class="client-bsp-images-placeholder">Nenhuma imagem encontrada.</td></tr>';
+      }
+      bindClientBspImageLinks();
+    })
+    .catch((err) => {
+      console.error(err);
+      tbody.innerHTML = '<tr><td colspan="2" class="client-bsp-images-placeholder">Falha ao carregar imagens.</td></tr>';
+    })
+    .finally(() => {
+      clearInterval(timer);
+      progressBar.style.width = '100%';
+      setTimeout(() => { progressContainer.hidden = true; }, 400);
+    });
+}
+
+/**
+ * Percorre todos os botões da tabela de imagens no modal e associa um
+ * manipulador de clique. Ao clicar, o viewer interno será aberto com a
+ * imagem correspondente. O viewer utiliza o endpoint proxy
+ * `/api/client-under-dev-image?id=` para buscar a imagem de forma segura.
+ */
+function bindClientBspImageLinks() {
+  const modal = document.getElementById('client-bsp-images-modal');
+  if (!modal) return;
+  const buttons = modal.querySelectorAll('.client-bsp-image-view-link');
+  buttons.forEach((button) => {
+    button.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      const attId = button.getAttribute('data-attachment-id');
+      const name = button.getAttribute('data-attachment-name') || 'Imagem';
+      const viewer = modal.querySelector('#client-bsp-img-viewer');
+      const imgEl = modal.querySelector('#client-bsp-img');
+      // Ao clicar em uma imagem, utilize o índice armazenado para abrir no viewer
+      const indexAttr = button.getAttribute('data-image-index');
+      const idx = indexAttr != null ? Number(indexAttr) : 0;
+      showClientBspImageAtIndex(idx);
+    });
+  });
+}
+
+/**
+ * Fecha o modal de imagens da BSP, restaurando a rolagem do corpo e
+ * ocultando o conteúdo. A limpeza do viewer é feita na função que
+ * encerra a visualização individual.
+ */
+function closeClientBspImagesModal() {
+  const modal = document.getElementById('client-bsp-images-modal');
+  if (modal) modal.classList.remove('active');
+  document.body.classList.remove('client-bsp-images-open');
+}
+
+/**
+ * Exibe a imagem no viewer conforme o índice fornecido. Mantém o índice
+ * atual no modal para permitir navegação com os botões Anterior/Próximo.
+ *
+ * @param {number} index Índice da imagem a ser exibida
+ */
+function showClientBspImageAtIndex(index) {
+  const modal = document.getElementById('client-bsp-images-modal');
+  if (!modal) return;
+  const images = modal._bspImages || [];
+  if (!images.length) return;
+  // Ajustar o índice para ficar dentro dos limites e permitir ciclo infinito
+  const adjIndex = ((Number(index) % images.length) + images.length) % images.length;
+  modal._currentImageIndex = adjIndex;
+  const imgData = images[adjIndex];
+  const viewer = modal.querySelector('#client-bsp-img-viewer');
+  const imgEl = modal.querySelector('#client-bsp-img');
+  if (imgEl && imgData) {
+    const attId = imgData.id;
+    const sheetId = imgData.sheetId || '';
+    // Use the temporary URL returned by the BSP image endpoint whenever available.
+    // This supports both row attachments and Smartsheet cell images. If no URL was
+    // returned, fall back to the attachment proxy.
+    const directUrl = imgData.url && String(imgData.url).trim();
+    const baseUrl = `/api/client-under-dev-image?id=${encodeURIComponent(attId)}`;
+    const proxyUrl = sheetId ? `${baseUrl}&sheetId=${encodeURIComponent(sheetId)}` : baseUrl;
+    imgEl.src = directUrl || proxyUrl;
+    imgEl.alt = imgData.name || 'Imagem';
+    if (viewer) viewer.classList.add('active');
+  }
+}
+
+/**
+ * Avança para a próxima imagem no viewer.
+ */
+function showNextClientBspImage() {
+  const modal = document.getElementById('client-bsp-images-modal');
+  if (!modal) return;
+  const idx = modal._currentImageIndex != null ? Number(modal._currentImageIndex) : 0;
+  showClientBspImageAtIndex(idx + 1);
+}
+
+/**
+ * Retorna para a imagem anterior no viewer.
+ */
+function showPrevClientBspImage() {
+  const modal = document.getElementById('client-bsp-images-modal');
+  if (!modal) return;
+  const idx = modal._currentImageIndex != null ? Number(modal._currentImageIndex) : 0;
+  showClientBspImageAtIndex(idx - 1);
+}
+
+
+/**
+ * Modal sob demanda para importar imagens diretamente para a linha da BSP no Smartsheet.
+ * O modal só é criado/carregado quando o usuário clica em "Importar imagem", mantendo
+ * o painel leve no carregamento inicial.
+ */
+function ensureClientBspUploadImageModalEl() {
+  let modal = document.getElementById('client-bsp-upload-image-modal');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'client-bsp-upload-image-modal';
+  modal.className = 'client-bsp-upload-image-modal';
+  modal.innerHTML = `
+    <div class="client-bsp-upload-image-dialog" role="dialog" aria-modal="true" aria-label="Importar imagem da BSP">
+      <div class="client-bsp-upload-image-header">
+        <div>
+          <p class="client-kicker">Smartsheet Tracking</p>
+          <h2>Importar imagem da BSP</h2>
+        </div>
+        <button type="button" class="client-bsp-upload-image-close" aria-label="Fechar">×</button>
+      </div>
+      <div class="client-bsp-upload-image-body">
+        <p class="client-bsp-upload-image-note">Selecione uma ou mais imagens. O sistema comprime automaticamente antes de enviar para manter o painel leve.</p>
+        <input id="client-bsp-upload-image-input" type="file" accept="image/*" multiple />
+        <div id="client-bsp-upload-image-list" class="client-bsp-upload-image-list"></div>
+        <p id="client-bsp-upload-image-status" class="client-bsp-upload-image-status"></p>
+      </div>
+      <div class="client-bsp-upload-image-actions">
+        <button type="button" class="client-exec-pdf-button" data-client-bsp-upload-image-cancel>Cancelar</button>
+        <button type="button" class="client-exec-pdf-button client-exec-upload-image-submit" data-client-bsp-upload-image-submit>Enviar para Smartsheet</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', (ev) => {
+    if (ev.target === modal || ev.target.closest('.client-bsp-upload-image-close') || ev.target.closest('[data-client-bsp-upload-image-cancel]')) {
+      closeClientBspUploadImageModal();
+    }
+    const submit = ev.target.closest('[data-client-bsp-upload-image-submit]');
+    if (submit) {
+      const rowId = modal.dataset.rowId;
+      uploadClientBspSelectedImages(rowId);
+    }
+  });
+  const input = modal.querySelector('#client-bsp-upload-image-input');
+  input.addEventListener('change', () => renderClientBspUploadSelection());
+  return modal;
+}
+
+function openClientBspUploadImageModal(rowId) {
+  if (!rowId) return;
+  const modal = ensureClientBspUploadImageModalEl();
+  modal.dataset.rowId = rowId;
+  modal.dataset.sheetId = '';
+  modal.classList.add('active');
+  document.body.classList.add('client-bsp-upload-image-open');
+  const input = modal.querySelector('#client-bsp-upload-image-input');
+  const list = modal.querySelector('#client-bsp-upload-image-list');
+  const status = modal.querySelector('#client-bsp-upload-image-status');
+  if (input) input.value = '';
+  if (list) list.innerHTML = '';
+  if (status) status.textContent = '';
+}
+
+function closeClientBspUploadImageModal() {
+  const modal = document.getElementById('client-bsp-upload-image-modal');
+  if (modal) modal.classList.remove('active');
+  document.body.classList.remove('client-bsp-upload-image-open');
+}
+
+function renderClientBspUploadSelection() {
+  const modal = document.getElementById('client-bsp-upload-image-modal');
+  if (!modal) return;
+  const input = modal.querySelector('#client-bsp-upload-image-input');
+  const list = modal.querySelector('#client-bsp-upload-image-list');
+  const files = Array.from(input?.files || []);
+  if (!list) return;
+  if (!files.length) {
+    list.innerHTML = '';
+    return;
+  }
+  list.innerHTML = files.map((file) => `
+    <div class="client-bsp-upload-image-item">
+      <span>${escapeHtml(file.name)}</span>
+      <small>${Math.round(file.size / 1024)} KB</small>
+    </div>
+  `).join('');
+}
+
+function readClientBspFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Falha ao ler imagem.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadClientBspImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Não foi possível carregar a imagem para compressão.'));
+    img.src = dataUrl;
+  });
+}
+
+async function prepareClientBspImageForUpload(file) {
+  const originalDataUrl = await readClientBspFileAsDataUrl(file);
+  // GIF/HEIC e formatos que o canvas pode não processar seguem sem conversão.
+  if (/image\/gif/i.test(file.type) || /heic|heif/i.test(file.type || file.name)) {
+    return {
+      fileName: file.name,
+      mimeType: file.type || 'image/jpeg',
+      base64: originalDataUrl.split(',')[1] || originalDataUrl,
+    };
+  }
+  try {
+    const img = await loadClientBspImage(originalDataUrl);
+    const maxSide = 1800;
+    const ratio = Math.min(1, maxSide / Math.max(img.width || maxSide, img.height || maxSide));
+    const width = Math.max(1, Math.round((img.width || maxSide) * ratio));
+    const height = Math.max(1, Math.round((img.height || maxSide) * ratio));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, width, height);
+    const outType = 'image/jpeg';
+    const compressed = canvas.toDataURL(outType, 0.82);
+    const baseName = String(file.name || 'imagem.jpg').replace(/\.[^.]+$/, '');
+    return {
+      fileName: `${baseName}.jpg`,
+      mimeType: outType,
+      base64: compressed.split(',')[1] || compressed,
+    };
+  } catch (err) {
+    return {
+      fileName: file.name,
+      mimeType: file.type || 'image/jpeg',
+      base64: originalDataUrl.split(',')[1] || originalDataUrl,
+    };
+  }
+}
+
+async function uploadClientBspSelectedImages(rowId) {
+  const modal = document.getElementById('client-bsp-upload-image-modal');
+  if (!modal || !rowId) return;
+  const input = modal.querySelector('#client-bsp-upload-image-input');
+  const status = modal.querySelector('#client-bsp-upload-image-status');
+  const submit = modal.querySelector('[data-client-bsp-upload-image-submit]');
+  const files = Array.from(input?.files || []);
+  if (!files.length) {
+    if (status) status.textContent = 'Selecione pelo menos uma imagem.';
+    return;
+  }
+  if (submit) submit.disabled = true;
+  const sheetId = modal.dataset.sheetId || '';
+  let okCount = 0;
+  try {
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
+      if (status) status.textContent = `Preparando ${i + 1}/${files.length}: ${file.name}`;
+      const prepared = await prepareClientBspImageForUpload(file);
+      if (status) status.textContent = `Enviando ${i + 1}/${files.length}: ${prepared.fileName}`;
+      const res = await fetch('/api/client-bsp-upload-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rowId,
+          sheetId,
+          fileName: prepared.fileName,
+          mimeType: prepared.mimeType,
+          base64: prepared.base64,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || `Falha ao enviar ${prepared.fileName}.`);
+      }
+      okCount += 1;
+    }
+    if (status) status.textContent = `${okCount} imagem(ns) importada(s) com sucesso. Atualizando galeria...`;
+    closeClientBspUploadImageModal();
+    const proj = state.projects && state.projects.find((item) => String(item.rowId) === String(rowId));
+    const rowNumbers = [];
+    const rowIds = [];
+    if (proj && Array.isArray(proj.spools)) {
+      for (const sp of proj.spools) {
+        if (sp && sp.rowNumber != null) rowNumbers.push(sp.rowNumber);
+        if (sp && sp.rowId != null) rowIds.push(sp.rowId);
+      }
+    }
+    openClientBspImagesModal(rowId, rowNumbers, rowIds, sheetId);
+  } catch (err) {
+    if (status) status.textContent = err.message || 'Falha ao importar imagem.';
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
 function closeClientApiModal() {
   const modal = document.getElementById('client-api-modal');
   if (modal) modal.classList.add('hidden');
@@ -7601,6 +8918,13 @@ function handleClientDashboardClick(event) {
   const apiButton = event.target.closest('[data-client-open-api]');
   if (apiButton) {
     openClientApiModal();
+    return;
+  }
+
+  // Botão Projetos em Desenvolvimento (client under development)
+  const underDevButton = event.target.closest('[data-client-open-under-dev]');
+  if (underDevButton) {
+    openClientUnderDevPage();
     return;
   }
   const macroButton = event.target.closest('[data-client-open-macro-dashboard]');
@@ -9000,7 +10324,7 @@ function buildClientExecutivePanelWorkbook(project) {
     excelMergedCell('', 'Header', 2),
   ], 22));
   scheduleRows.forEach((row) => {
-    const state = getClientScheduleVisualState(row.progress);
+    const state = getClientScheduleVisualState(row.progress, row);
     const statusText = state === 'completed' ? 'Concluído' : state === 'in-progress' ? 'Em andamento' : 'Não iniciado';
     panelRows.push(excelRow([
       excelCellWithStyle(row.label || '—', 'String', row.type === 'group' ? 'Summary' : 'NormalCell'),
@@ -9009,7 +10333,7 @@ function buildClientExecutivePanelWorkbook(project) {
       excelCellWithStyle(formatClientDateShort(row.start), 'String', 'NormalCell'),
       excelCellWithStyle(formatClientDateShort(row.finish), 'String', 'NormalCell'),
       excelCellWithStyle(statusText, 'String', state === 'completed' ? 'Good' : state === 'in-progress' ? 'Warning' : 'NormalCell'),
-      excelCellWithStyle(Number.isFinite(row.deviationDays) && row.deviationDays !== 0 ? `${row.deviationDays > 0 ? '+' : ''}${row.deviationDays}d` : '—', 'String', row.deviationDays > 0 ? 'Warning' : 'NormalCell'),
+      excelCellWithStyle(Number.isFinite(row.deviationDays) && row.deviationDays > 0 ? `+${row.deviationDays}d` : '—', 'String', row.deviationDays > 0 ? 'Warning' : 'NormalCell'),
       excelMergedCell('', 'NormalCell', 2),
     ], 20));
   });
@@ -9477,7 +10801,7 @@ function renderSelectedProjectCard() {
 
       <div class="detail-actions">
         <button class="primary-button" type="button" id="open-selected-project">Abrir detalhamento completo</button>
-        ${canManageClientBspPanel(project) ? '<button class="ghost-button" type="button" id="open-selected-client-panel">Painel do Cliente</button>' : ''}
+        ${canOpenClientBspPanel(project) ? '<button class="ghost-button" type="button" id="open-selected-client-panel">Painel do Cliente</button>' : ''}
       </div>
     </div>
   `;
@@ -9489,7 +10813,10 @@ function renderSelectedProjectCard() {
 
   const clientPanelButton = document.getElementById("open-selected-client-panel");
   if (clientPanelButton) {
-    clientPanelButton.addEventListener("click", () => openClientBspExecutiveForPmEdit(project));
+    clientPanelButton.addEventListener("click", () => {
+      if (canManageClientBspPanel(project)) openClientBspExecutiveForPmEdit(project);
+      else if (canOpenClientBspPanel(project)) openClientBspExecutive(project);
+    });
   }
 
   const backlogButton = document.getElementById("open-backlog-project");
@@ -9580,7 +10907,7 @@ function renderModal(project) {
       ${milestoneList || '<div class="empty-inline">Nenhum marco de data disponível.</div>'}
     </section>
 
-    ${canManageClientBspPanel(project) ? `<section class="modal-client-panel-action"><button class="ghost-button ghost-button--compact modal-client-panel-button" type="button" data-open-client-panel="${escapeHtml(project.rowId)}">Painel do Cliente / Editar datas</button><span>Abre a visão executiva do cliente já no modo de ajuste.</span></section>` : ''}
+    ${canOpenClientBspPanel(project) ? `<section class="modal-client-panel-action"><button class="ghost-button ghost-button--compact modal-client-panel-button" type="button" data-open-client-panel="${escapeHtml(project.rowId)}">${canManageClientBspPanel(project) ? 'Painel do Cliente / Editar datas' : 'Painel do Cliente'}</button><span>${canManageClientBspPanel(project) ? 'Abre a visão executiva do cliente já no modo de ajuste.' : 'Abre a visão executiva do cliente somente para consulta.'}</span></section>` : ''}
 
     ${renderProjectSignals(project)}
     ${renderClientTratativaNotice(project)}
@@ -9991,6 +11318,28 @@ function isProjectsCacheFresh(cacheEntry) {
 function shouldIgnoreCachedProjectsPayload(cacheEntry) {
   if (!cacheEntry?.payload) return true;
   const cachedProjects = Array.isArray(cacheEntry.payload.projects) ? cacheEntry.payload.projects : [];
+  const meta = cacheEntry.payload.meta || {};
+  const isOldStaticSnapshot = Boolean(
+    meta.servedFromStaticFallback
+    || meta.servedFromErrorFallback
+    || meta.servedFromDiskFallback
+    || meta.servedFromDiskFastCache
+    || meta.cacheReason === 'disk-fast-boot'
+    || meta.cacheReason === 'client-disk-fast-boot'
+    || meta.source === 'static-fallback'
+    || meta.source === 'snapshot'
+    || meta.source === 'disk-snapshot'
+    || String(meta.version || '').toLowerCase().includes('snapshot')
+  );
+  if (isOldStaticSnapshot) {
+    console.warn('[Cache] Ignorando snapshot/fallback local antigo para forçar leitura direta do Smartsheet');
+    return true;
+  }
+  const savedAt = Number(cacheEntry?.savedAt || 0);
+  if (savedAt > 0 && Date.now() - savedAt > PROJECTS_CACHE_TTL_MS) {
+    console.warn('[Cache] Ignorando cache local vencido para não exibir base operacional antiga');
+    return true;
+  }
   // Evita reaproveitar cache vazio criado por versão anterior do Portal do Cliente.
   // Cache vazio de cliente travava os cards em "--" até expirar.
   if (isClientUser() && cachedProjects.length === 0) {
@@ -10012,6 +11361,16 @@ function shouldIgnoreCachedProjectsPayload(cacheEntry) {
 }
 
 function applyProjectsPayload(data, options = {}) {
+  // v37.04: se o backend reidratou os dados do cliente pelo Supabase,
+  // sincroniza também o estado do frontend para evitar Portal do Cliente ficar com nome/logo padrão.
+  if (isClientUser() && data?.meta) {
+    state.user = {
+      ...state.user,
+      clientName: state.user?.clientName || data.meta.clientName || '',
+      clientKey: state.user?.clientKey || data.meta.clientKey || '',
+      clientLogoUrl: state.user?.clientLogoUrl || data.meta.clientLogoUrl || '',
+    };
+  }
   state.projects = enrichProjects(data.projects || []);
   renderAdminProjectPmAliasOptions();
   renderProjectViewTabs();
@@ -10103,7 +11462,8 @@ async function loadProjects(options = {}) {
   if (background && shouldSkipBackgroundRequest(options)) return;
 
   const cached = skipLocalCache ? null : readProjectsCache();
-  const shouldUseCache = !force && cached?.payload && !shouldIgnoreCachedProjectsPayload(cached);
+  const cacheFresh = isProjectsCacheFresh(cached);
+  const shouldUseCache = !force && cached?.payload && cacheFresh && !shouldIgnoreCachedProjectsPayload(cached);
   if (shouldUseCache) {
     applyProjectsPayload(cached.payload, { fromCache: true });
     const fresh = isProjectsCacheFresh(cached);
@@ -10194,10 +11554,27 @@ async function loadProjects(options = {}) {
       state.lastProjectsFetchAt = Date.now();
       writeProjectsCache(data);
       applyProjectsPayload(data, { fromCache: false });
+
+      // v11 performance: se a API respondeu com snapshot/cache de boot rápido, libera a tela
+      // imediatamente e dispara uma revalidação real em segundo plano. Nunca deixa o painel
+      // em branco esperando o Smartsheet.
+      const meta = data?.meta || {};
+      const shouldRevalidateAfterFastBoot = Boolean(
+        !force && !background && (meta.servedFromDiskFastCache || meta.servedFromFastCache || meta.stale || meta.cacheReason === 'disk-fast-boot' || meta.cacheReason === 'client-disk-fast-boot')
+      );
+      if (shouldRevalidateAfterFastBoot) {
+        if (lastSyncEl) {
+          lastSyncEl.textContent = state.meta?.lastSync
+            ? `Última base válida: ${new Date(state.meta.lastSync).toLocaleString("pt-BR")} • sincronizando em segundo plano`
+            : 'Base rápida carregada • sincronizando em segundo plano';
+        }
+        window.setTimeout(() => revalidateProjectsInBackground(true), 800);
+      }
+
       return {
         ok: true,
-        fromCache: false,
-        revalidating: false,
+        fromCache: Boolean(meta.servedFromDiskFastCache || meta.servedFromFastCache),
+        revalidating: shouldRevalidateAfterFastBoot,
         projectsCount: projectsFromApi.length,
       };
     } catch (error) {
@@ -10216,8 +11593,35 @@ async function loadProjects(options = {}) {
         return;
       }
 
+      // v11 performance: se a API falhou antes de popular a tela, tenta reaplicar o último
+      // cache local mesmo vencido. É melhor manter a última base visível do que deixar o
+      // painel zerado enquanto a sincronização falha.
+      const staleCache = readProjectsCache();
+      const staleProjects = Array.isArray(staleCache?.payload?.projects) ? staleCache.payload.projects : [];
+      if (staleProjects.length) {
+        applyProjectsPayload(staleCache.payload, { fromCache: true, staleFallback: true });
+        if (lastSyncEl) {
+          const staleDate = staleCache.payload?.meta?.lastSync || staleCache.savedAt;
+          lastSyncEl.textContent = staleDate
+            ? `Conexão instável • usando última base válida de ${new Date(staleDate).toLocaleString("pt-BR")}`
+            : 'Conexão instável • usando última base válida local';
+        }
+        window.setTimeout(() => revalidateProjectsInBackground(true), 2500);
+        return;
+      }
+
       bodyEl.innerHTML = `<tr><td colspan="21" class="loading-cell">${escapeHtml(fallbackMessage)}</td></tr>`;
       detailCardEl.innerHTML = `<div class="detail-placeholder">${escapeHtml(fallbackMessage)}</div>`;
+      if (isClientUser()) {
+        const syncEl = document.getElementById('client-dashboard-sync');
+        const metaEl = document.getElementById('client-dashboard-meta');
+        const grid = document.getElementById('client-vessel-grid');
+        if (syncEl) syncEl.textContent = 'Carregando dados do cliente...';
+        if (metaEl) metaEl.textContent = 'Aguardando retorno da carteira do cliente';
+        if (grid && !grid.querySelector('[data-client-vessel]')) {
+          grid.innerHTML = `<div class="client-empty">${escapeHtml(fallbackMessage)} Clique em Atualizar em alguns segundos.</div>`;
+        }
+      }
     } finally {
       state.loadingProjectsRequest = null;
       if (refreshProjectsButtonEl) {
@@ -11318,6 +12722,7 @@ if (adminUsersListEl) {
     if (clientPanelButton) {
       const project = state.projects.find((item) => String(item.rowId) === String(clientPanelButton.dataset.openClientPanel));
       if (project && canManageClientBspPanel(project)) openClientBspExecutiveForPmEdit(project);
+      else if (project && canOpenClientBspPanel(project)) openClientBspExecutive(project);
       return;
     }
 
@@ -11376,6 +12781,7 @@ if (adminUsersListEl) {
 function closeLoginModal() {
   if (!loginModalEl) return;
   if (!state.user) return;
+  document.body.classList.remove('auth-locked');
   loginModalEl.classList.add("hidden");
   loginModalEl.setAttribute("aria-hidden", "true");
   if (
@@ -11390,6 +12796,7 @@ function closeLoginModal() {
 
 function openLoginModal(message = "") {
   if (!loginModalEl) return;
+  if (!state.user) document.body.classList.add('auth-locked');
   if (loginFeedbackEl) loginFeedbackEl.textContent = message || "Faça login para acessar o painel operacional.";
   loginModalEl.classList.remove("hidden");
   loginModalEl.setAttribute("aria-hidden", "false");
@@ -11478,6 +12885,19 @@ function failLoginProgress(message) {
   window.setTimeout(hideLoginProgressOverlay, 1200);
 }
 
+function scheduleClientPoBackgroundRefresh() {
+  if (!CLIENT_PORTAL_RELEASE_WITH_PO_PENDING || !isClientUser()) return;
+  if (state.clientPoBackgroundRefreshScheduled) return;
+  state.clientPoBackgroundRefreshScheduled = true;
+  window.setTimeout(() => {
+    revalidateProjectsInBackground(true)
+      .catch(() => {})
+      .finally(() => {
+        state.clientPoBackgroundRefreshScheduled = false;
+      });
+  }, CLIENT_PORTAL_PO_BACKGROUND_REFRESH_DELAY_MS);
+}
+
 function hasDashboardDataReady() {
   const projects = Array.isArray(state.projects) ? state.projects : [];
   if (!state.user || projects.length === 0) return false;
@@ -11486,8 +12906,19 @@ function hasDashboardDataReady() {
     const bspsText = String(document.getElementById('client-stat-bsps')?.textContent || '').trim();
     const vesselGrid = document.getElementById('client-vessel-grid');
     const hasVisibleClientCards = Boolean(vesselGrid && vesselGrid.querySelector('[data-client-vessel]'));
+    const baseReady = bspsText !== '' && bspsText !== '--' && bspsText !== '0' && hasVisibleClientCards;
+    if (!baseReady) return false;
+
     const poReady = isClientProjectsPayloadPoReady({ projects, meta: state.meta || {} });
-    return bspsText !== '' && bspsText !== '--' && bspsText !== '0' && hasVisibleClientCards && poReady;
+    if (!poReady) {
+      scheduleClientPoBackgroundRefresh();
+      if (lastSyncEl) {
+        lastSyncEl.textContent = state.meta?.lastSync
+          ? `Última atualização: ${new Date(state.meta.lastSync).toLocaleString("pt-BR")} • POs atualizando em segundo plano`
+          : 'BSPs carregadas • POs atualizando em segundo plano';
+      }
+    }
+    return poReady || CLIENT_PORTAL_RELEASE_WITH_PO_PENDING;
   }
 
   const countText = String(searchCountEl?.textContent || '').trim();
@@ -11508,21 +12939,26 @@ async function ensureDashboardDataReadyBeforeRelease(options = {}) {
     await waitForNextRenderFrame();
     if (hasDashboardDataReady()) return true;
 
-    const clientPoPending = isClientUser() && !isClientProjectsPayloadPoReady({ projects: state.projects || [], meta: state.meta || {} });
+    const clientHasNoProjects = isClientUser() && (!Array.isArray(state.projects) || state.projects.length === 0);
+    const poStillPending = isClientUser() && !isClientProjectsPayloadPoReady({ projects: state.projects || [], meta: state.meta || {} });
+    const clientPoPending = poStillPending && !CLIENT_PORTAL_RELEASE_WITH_PO_PENDING && !clientHasNoProjects;
+    if (poStillPending && CLIENT_PORTAL_RELEASE_WITH_PO_PENDING && !clientHasNoProjects) scheduleClientPoBackgroundRefresh();
     setLoginProgress(Math.min(96, 88 + attempt * 2), {
-      title: clientPoPending ? 'Carregando POs...' : 'Conferindo dados na tela...',
-      message: clientPoPending
-        ? 'As BSPs já foram localizadas. Agora estamos buscando a base completa de POs sem atualizar a página.'
-        : 'Estamos garantindo que as BSPs, POs e dashboards já apareceram no painel.',
+      title: clientHasNoProjects ? 'Carregando BSPs do cliente...' : (clientPoPending ? 'Carregando POs...' : 'Conferindo dados na tela...'),
+      message: clientHasNoProjects
+        ? 'Estamos forçando uma leitura limpa da carteira do cliente para evitar abrir o Portal vazio.'
+        : (clientPoPending
+          ? 'As BSPs já foram localizadas. Agora estamos buscando a base completa de POs sem atualizar a página.'
+          : 'Estamos garantindo que as BSPs e dashboards já apareceram no painel. As POs podem continuar atualizando em segundo plano.'),
       detail: `Validação dos dados ${attempt}/${maxAttempts}.`,
     });
 
     try {
       await loadProjects({
-        force: attempt > 2 && clientPoPending,
+        force: (clientHasNoProjects && attempt >= 2) || (attempt > 2 && clientPoPending),
         skipLocalCache: true,
         suppressLoadingState: true,
-        preferServerCache: false,
+        preferServerCache: !(clientHasNoProjects || clientPoPending),
         requireData: true,
         requireClientPo: clientPoPending,
       });
@@ -11656,6 +13092,7 @@ async function handleChangePasswordSubmit(event) {
 function updateSessionUi() {
   const user = state.user;
   if (!user) {
+    document.body.classList.add('auth-locked');
     state.projectView = 'all';
     state.sectorScopedView = false;
     state.alertSectorFilter = 'all';
@@ -11672,6 +13109,8 @@ function updateSessionUi() {
     setClientDashboardMode();
     return;
   }
+
+  document.body.classList.remove('auth-locked');
 
   if (shouldUseSectorScopedToggle(user)) {
     state.projectView = 'all';
@@ -12646,6 +14085,7 @@ function resetAdminUserForm() {
   if (adminUserClientPlatformNameEl) adminUserClientPlatformNameEl.value = '';
   if (adminUserClientPlatformImagesEl) adminUserClientPlatformImagesEl.value = '';
   if (adminUserClientPlatformImageFileEl) adminUserClientPlatformImageFileEl.value = '';
+  if (adminUserCanViewClientPanelEl) adminUserCanViewClientPanelEl.checked = false;
   updateAdminClientFieldsVisibility();
   updateAdminProjectPmAliasesVisibility();
   updateAdminQualityCompetenciesVisibility();
@@ -12679,6 +14119,7 @@ function startEditUser(userId) {
   if (adminUserClientPlatformNameEl) adminUserClientPlatformNameEl.value = '';
   if (adminUserClientPlatformImagesEl) adminUserClientPlatformImagesEl.value = formatClientPlatformImages(user.clientPlatformImages || '');
   if (adminUserClientPlatformImageFileEl) adminUserClientPlatformImageFileEl.value = '';
+  if (adminUserCanViewClientPanelEl) adminUserCanViewClientPanelEl.checked = user.canViewClientPanel === true;
   updateAdminClientFieldsVisibility();
   updateAdminProjectPmAliasesVisibility();
   updateAdminQualityCompetenciesVisibility();
@@ -12743,6 +14184,7 @@ function renderAdminUsersList(users = []) {
           <span>Setor principal: ${escapeHtml(sectorLabel(user.sector))}</span>
           <span>Recebe alertas de: ${escapeHtml(formatSectorList(Array.isArray(user.alertSectors) ? user.alertSectors : [user.sector]))}</span>
           ${user.role === 'client' ? `<span>Cliente: ${escapeHtml(user.clientName || user.clientKey || '—')}</span>` : ''}
+          ${user.canViewClientPanel ? '<span>Painel do cliente: <strong>Liberado</strong></span>' : ''}
           <span>Ambiente: <strong>${escapeHtml(user.operationRegion || user.siteKey || user.portalSite || 'PT')}</strong></span>
           ${(userHasProjectsScope(user) && Array.isArray(user.projectPmAliases) && user.projectPmAliases.length) ? `<span>PMs adicionais: ${escapeHtml(user.projectPmAliases.join(', '))}</span>` : ''}
           ${userHasQualityScope(user) ? `<span>Competências da Qualidade: ${escapeHtml(formatQualityCompetencies(user.qualityCompetencies || []))}</span>` : ''}
@@ -12879,6 +14321,7 @@ async function loadAdminData(options = {}) {
       alertSectors: Array.isArray(user.alertSectors) ? user.alertSectors : [user.sector],
       projectPmAliases: Array.isArray(user.projectPmAliases) ? user.projectPmAliases : [],
       qualityCompetencies: Array.isArray(user.qualityCompetencies) ? user.qualityCompetencies : [],
+      canViewClientPanel: user.canViewClientPanel === true,
       active: user.active !== false,
       createdAt: user.createdAt || null,
     }));
@@ -12902,6 +14345,7 @@ async function loadAdminData(options = {}) {
       alertSectors: Array.isArray(user.alertSectors) ? user.alertSectors : [user.sector],
       projectPmAliases: Array.isArray(user.projectPmAliases) ? user.projectPmAliases : [],
       qualityCompetencies: Array.isArray(user.qualityCompetencies) ? user.qualityCompetencies : [],
+      canViewClientPanel: user.canViewClientPanel === true,
       active: user.active !== false,
       createdAt: user.createdAt || null,
     }));
@@ -12993,7 +14437,7 @@ async function handleLoginSubmit(event) {
         username: String(loginUsernameEl.value || "").trim(),
         password: String(loginPasswordEl.value || "").trim(),
         operationRegion: 'PT',
-        siteKey: 'PT',
+        siteKey: 'BR',
       }),
     });
     const data = await response.json().catch(() => null);
@@ -13039,9 +14483,9 @@ async function handleLoginSubmit(event) {
       return;
     }
     setLoginProgress(55, {
-      title: 'Carregando POs...',
-      message: 'Estamos carregando as POs, demandas e referências de fabricação.',
-      detail: 'POs e demandas em processamento.',
+      title: 'Montando Portal do Cliente...',
+      message: 'Estamos abrindo as BSPs primeiro. As POs e referências continuam atualizando em segundo plano.',
+      detail: 'BSPs e dashboard em processamento.',
     });
     await projectsPromise;
     setLoginProgress(88, {
@@ -13050,7 +14494,7 @@ async function handleLoginSubmit(event) {
       detail: 'Dashboard quase pronto.',
     });
 
-    await ensureDashboardDataReadyBeforeRelease({ maxAttempts: 4, retryDelayMs: 650 });
+    await ensureDashboardDataReadyBeforeRelease({ maxAttempts: 2, retryDelayMs: 350 });
 
     syncStageDraftsForCurrentSector();
     const autoOpenStageValidation = shouldOpenStageValidationWorkspaceFromUrl() && canValidateStageWorkspace();
@@ -13067,13 +14511,121 @@ async function handleLoginSubmit(event) {
   }
 }
 
+function clearClientVisibleCookies() {
+  try {
+    const rawCookies = String(document.cookie || '').split(';').map((item) => item.trim()).filter(Boolean);
+    if (!rawCookies.length) return;
+
+    const hostname = String(window.location.hostname || '').trim();
+    const hostParts = hostname.split('.').filter(Boolean);
+    const domainCandidates = new Set(['']);
+    if (hostname && !/^localhost$/i.test(hostname) && !/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) {
+      domainCandidates.add(hostname);
+      domainCandidates.add(`.${hostname}`);
+      for (let index = 1; index < hostParts.length - 1; index += 1) {
+        const domain = hostParts.slice(index).join('.');
+        if (domain) {
+          domainCandidates.add(domain);
+          domainCandidates.add(`.${domain}`);
+        }
+      }
+    }
+
+    const pathCandidates = new Set(['/']);
+    const pathParts = String(window.location.pathname || '/').split('/').filter(Boolean);
+    let currentPath = '';
+    pathParts.forEach((part) => {
+      currentPath += `/${part}`;
+      pathCandidates.add(currentPath);
+      pathCandidates.add(`${currentPath}/`);
+    });
+
+    rawCookies.forEach((cookie) => {
+      const separatorIndex = cookie.indexOf('=');
+      const name = separatorIndex >= 0 ? cookie.slice(0, separatorIndex).trim() : cookie.trim();
+      if (!name) return;
+      domainCandidates.forEach((domain) => {
+        pathCandidates.forEach((path) => {
+          const domainPart = domain ? `; domain=${domain}` : '';
+          document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0; path=${path}${domainPart}; SameSite=Lax`;
+        });
+      });
+    });
+  } catch (error) {
+    console.warn('Falha ao limpar cookies visíveis do navegador.', error);
+  }
+}
+
+function shouldPreserveLocalStorageKeyOnLogout(key) {
+  const name = String(key || '');
+
+  // Mantém somente o cache operacional versionado e escopado por usuário/perfil/cliente.
+  // Esse cache é o que evita o próximo login ficar preso esperando Smartsheet/Supabase ao vivo.
+  // Dados de sessão, rascunhos, alertas, filtros e usuários locais continuam sendo apagados.
+  if (name.startsWith(`${PROJECTS_CACHE_KEY}:`)) return true;
+
+  // Mantém o escopo fixo BR do painel. Não contém dados de usuário e evita reconfiguração desnecessária.
+  if (name === 'step_operation_region') return true;
+
+  return false;
+}
+
+function clearLocalStorageForFastLogout() {
+  try {
+    if (!window.localStorage) return;
+    Object.keys(window.localStorage).forEach((key) => {
+      if (!shouldPreserveLocalStorageKeyOnLogout(key)) {
+        window.localStorage.removeItem(key);
+      }
+    });
+  } catch (error) {
+    console.warn('Falha ao limpar localStorage seletivo.', error);
+  }
+}
+
+async function cleanupLogoutRuntimeWithoutBreakingFastBoot() {
+  try { window.clearInterval(state.pollTimer); } catch (_) {}
+  try { stopPresenceHeartbeat(); } catch (_) {}
+  try { window.sessionStorage?.clear(); } catch (error) { console.warn('Falha ao limpar sessionStorage.', error); }
+  clearLocalStorageForFastLogout();
+  clearClientVisibleCookies();
+
+  // Importante: não remove Service Worker nem Cache Storage do app.
+  // Apagar esses caches deixava o próximo login lento e sem base local caso a API demorasse.
+  // A atualização limpa visual é feita pelo cache-buster da URL e pelos fetches /api em no-store.
+}
+
+function reloadAfterLogoutCleanup() {
+  try {
+    const target = new URL(window.location.origin + window.location.pathname);
+    target.searchParams.set('logout', '1');
+    target.searchParams.set('clean', String(Date.now()));
+    window.location.replace(target.toString());
+  } catch (_) {
+    window.location.href = `/?logout=1&clean=${Date.now()}`;
+  }
+}
+
 async function handleLogout() {
-  await fetch("/api/auth-logout", { credentials: "same-origin" });
+  const previousLogoutLabel = logoutButtonEl?.textContent || 'Sair';
+  if (logoutButtonEl) {
+    logoutButtonEl.disabled = true;
+    logoutButtonEl.textContent = 'Saindo...';
+  }
+
+  try {
+    await fetch('/api/auth-logout', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  } catch (error) {
+    console.warn('Falha ao avisar o servidor sobre logout. A limpeza local será executada mesmo assim.', error);
+  }
+
   state.user = null;
   resetClientBspOverridesState();
-  // Mantém o cache local de projetos entre logout e novo login.
-  // A chave já é escopada por papel/usuário/cliente; apagá-la aqui fazia o próximo login
-  // perder o carregamento imediato e voltar a depender do Smartsheet/Supabase.
   state.loadingProjectsRequest = null;
   state.lastProjectsFetchAt = 0;
   state.lastManualAlertsFetchAt = 0;
@@ -13095,11 +14647,15 @@ async function handleLogout() {
   state.attentionPopupQueue = [];
   state.attentionPopupCurrent = null;
   state.incomingAlertState = { manual: { initialized: false, ids: [] }, projectSignals: { initialized: false, ids: [] }, automatic: { initialized: false, ids: [] }, stageUpdates: { initialized: false, ids: [] } };
-  window.clearInterval(state.pollTimer);
-  stopPresenceHeartbeat();
-  updateSessionUi();
+
+  await cleanupLogoutRuntimeWithoutBreakingFastBoot();
   resetDashboardForLoggedOutState();
-  openLoginModal("Sessão encerrada. Faça login novamente para acessar o painel.");
+  updateSessionUi();
+  if (logoutButtonEl) {
+    logoutButtonEl.textContent = previousLogoutLabel;
+    logoutButtonEl.disabled = false;
+  }
+  reloadAfterLogoutCleanup();
 }
 
 
@@ -13167,6 +14723,9 @@ function shouldValidateStageTrackingItem(item) {
 async function validateStageTrackingInBackground() {
   if (!state.user || !canValidateStageWorkspace()) return;
   if (state.stageTrackingValidationRunning) return;
+  const now = Date.now();
+  if (state.lastStageTrackingValidationAt && now - state.lastStageTrackingValidationAt < STAGE_TRACKING_VALIDATION_COOLDOWN_MS) return;
+  state.lastStageTrackingValidationAt = now;
   const pending = (Array.isArray(state.stageUpdates) ? state.stageUpdates : [])
     .filter(shouldValidateStageTrackingItem)
     .slice(0, 25);
@@ -13342,7 +14901,7 @@ function renderStageSectorWorkspace() {
                             <td>${escapeHtml(spool.description || '—')}</td>
                             <td><span class="stage-badge stage-badge--sector">${escapeHtml(getSpoolStageLabel(project, spool))}</span></td>
                             <td>
-                              <div class="stage-row-form" data-stage-update-form="true" data-project-row-id="${escapeHtml(String(projectRowId || ''))}" data-project-number="${escapeHtml(project.projectNumber || '')}" data-spool-iso="${escapeHtml(spool.iso || '')}" data-stage-sector="${escapeHtml(sector || '')}">
+                              <div class="stage-row-form" data-stage-update-form="true" data-project-row-id="${escapeHtml(String(projectRowId || ''))}" data-project-number="${escapeHtml(project.projectNumber || '')}" data-project-display="${escapeHtml(project.projectDisplay || project.projectNumber || '')}" data-client="${escapeHtml(project.client || '')}" data-spool-iso="${escapeHtml(spool.iso || '')}" data-spool-description="${escapeHtml(spool.description || spool.drawing || '')}" data-spool-stage="${escapeHtml(getSpoolStageLabel(project, spool))}" data-stage-sector="${escapeHtml(sector || '')}">
                                 <select name="progress" data-stage-progress="true" ${pending || isSubmitting ? 'disabled' : ''}>
                                   <option value="">Selecione</option>
                                   ${STAGE_PROGRESS_OPTIONS.map((value) => `<option value="${value}" ${Number(draft.progress || 0) === Number(value) ? 'selected' : ''}>${value}%</option>`).join('')}
@@ -13613,7 +15172,12 @@ function renderStageDatePendencies() {
 function renderStageValidationWorkspace() {
   if (!stageUpdatesContentEl) return;
   const filtered = getFilteredStageUpdatesForValidation();
-  const pending = filtered.filter((item) => isPendingStageStatus(item.status));
+  // Na Validação PCP, a fila deve mostrar apenas apontamentos realmente pendentes.
+  // Quando a conferência do Tracking já encontrou o mesmo avanço aplicado
+  // (trackingMatched/trackingStatus='matched'), o registro não deve continuar
+  // aparecendo como pendência visual. Ele permanece armazenado, mas sai da fila
+  // operacional para não confundir o PCP com itens já atualizados.
+  const pending = filtered.filter((item) => isPendingStageStatus(item.status) && !isStageUpdateEffectivelyProcessed(item));
   const history = filtered.filter((item) => isResolvedStageStatus(item.status)).slice(0, 80);
   const selectable = pending.filter(isStageUpdateSelectableForTracking);
   const selectedIds = getSelectedVisibleStageIds(pending);
@@ -13769,18 +15333,30 @@ function persistStageDraftFromRow(rowEl) {
   const progress = String(formEl.querySelector('[name="progress"]')?.value || '').trim();
   const completionDate = String(rowEl.querySelector('[name="completionDate"]')?.value || '').trim();
   const note = String(rowEl.querySelector('[name="note"]')?.value || '').trim();
+  const metadata = {
+    projectNumber: String(formEl.dataset.projectNumber || '').trim(),
+    projectDisplay: String(formEl.dataset.projectDisplay || formEl.dataset.projectNumber || '').trim(),
+    client: String(formEl.dataset.client || '').trim(),
+    spoolDescription: String(formEl.dataset.spoolDescription || '').trim(),
+    spoolStage: String(formEl.dataset.spoolStage || '').trim(),
+  };
   if (!progress && !completionDate && !note) {
     removeStageDraft(projectRowId, spoolIso, sector);
     return;
   }
-  upsertStageDraft(projectRowId, spoolIso, sector, { progress, completionDate, note });
+  upsertStageDraft(projectRowId, spoolIso, sector, { progress, completionDate, note, ...metadata });
 }
 
 async function handleStageWorkspaceBulkSubmit() {
   const sector = getStageWorkspaceSector();
   const items = getReadyStageDraftEntries(sector).map((item) => ({
     projectRowId: item.projectRowId,
+    projectNumber: item.projectNumber || '',
+    projectDisplay: item.projectDisplay || item.projectNumber || '',
+    client: item.client || '',
     spoolIso: item.spoolIso,
+    spoolDescription: item.spoolDescription || '',
+    spoolStage: item.spoolStage || '',
     sector: item.sector,
     progress: Number(item.progress || 0),
     completionDate: item.completionDate || '',
@@ -14048,7 +15624,14 @@ async function handleStageWorkspaceSubmit(formEl, actionType = 'advance') {
   const progress = String(formEl?.querySelector('[name="progress"]')?.value || '').trim();
   const completionDate = String(rowEl?.querySelector('[name="completionDate"]')?.value || '').trim();
   const note = String(rowEl?.querySelector('[name="note"]')?.value || '').trim();
-  upsertStageDraft(projectRowId, spoolIso, sector, { progress, completionDate, note, actionType });
+  const metadata = {
+    projectNumber: String(formEl?.dataset?.projectNumber || '').trim(),
+    projectDisplay: String(formEl?.dataset?.projectDisplay || formEl?.dataset?.projectNumber || '').trim(),
+    client: String(formEl?.dataset?.client || '').trim(),
+    spoolDescription: String(formEl?.dataset?.spoolDescription || '').trim(),
+    spoolStage: String(formEl?.dataset?.spoolStage || '').trim(),
+  };
+  upsertStageDraft(projectRowId, spoolIso, sector, { progress, completionDate, note, actionType, ...metadata });
   if (!projectRowId || !spoolIso || !progress) {
     window.alert('Preencha o avanço do spool antes de enviar.');
     return;
@@ -14064,7 +15647,7 @@ async function handleStageWorkspaceSubmit(formEl, actionType = 'advance') {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectRowId, spoolIso, progress, completionDate, note, sector, actionType }),
+      body: JSON.stringify({ projectRowId, spoolIso, progress, completionDate, note, sector, actionType, ...metadata }),
     });
     const data = await response.json().catch(() => null);
     if (!response.ok || !data?.ok) throw new Error(data?.error || 'Falha ao enviar apontamento.');
@@ -14141,12 +15724,13 @@ async function handleAdminUserSubmit(event) {
       password: String(document.getElementById("admin-user-password").value || "").trim(),
       role: document.getElementById("admin-user-role").value,
       operationRegion: 'PT',
-      siteKey: 'PT',
-      portalSite: 'PT',
+      siteKey: 'BR',
+      portalSite: 'BR',
       sector: document.getElementById("admin-user-role").value === 'client' ? 'all' : document.getElementById("admin-user-sector").value,
       alertSectors: document.getElementById("admin-user-role").value === 'client' ? [] : getSelectedAdminAlertSectors(),
       projectPmAliases: adminUserFormHasProjectsScope() ? getAdminProjectPmAliases() : [],
       qualityCompetencies: adminUserFormHasQualityScope() ? getAdminQualityCompetencies() : [],
+      canViewClientPanel: adminUserCanViewClientPanelEl?.checked === true,
       clientKey: adminUserClientKeyEl?.value || '',
       clientName: adminUserClientNameEl?.value || '',
       clientLogoUrl: adminUserClientLogoUrlEl?.value || '',
@@ -14172,6 +15756,7 @@ async function handleAdminUserSubmit(event) {
       alertSectors: payload.role === "admin" ? [] : payload.alertSectors,
       projectPmAliases: payload.role === "admin" ? [] : payload.projectPmAliases,
       qualityCompetencies: payload.role === "admin" ? [] : payload.qualityCompetencies,
+      canViewClientPanel: payload.canViewClientPanel === true,
       clientKey: payload.clientKey,
       clientName: payload.clientName,
       clientLogoUrl: payload.clientLogoUrl,
@@ -14274,9 +15859,12 @@ async function init() {
   setupLoginPasswordToggle();
   setupAdminPasswordToggle();
   resetAdminUserForm();
-  prewarmProjectsApi();
+  // v36.85: o login precisa ser a primeira tela.
+  // Não aquecemos projetos antes de confirmar sessão para evitar demora/flash do painel antes do login.
+  if (!state.user) openLoginModal("Faça login para visualizar o painel.");
   const authenticated = await bootstrapSession();
   if (authenticated) {
+    prewarmProjectsApi();
     const autoOpenStageValidation = shouldOpenStageValidationWorkspaceFromUrl() && canValidateStageWorkspace();
     if (autoOpenStageValidation) {
       state.stageUpdatesSearchQuery = '';

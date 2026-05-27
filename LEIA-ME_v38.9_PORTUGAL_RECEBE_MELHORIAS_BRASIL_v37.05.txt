@@ -1,0 +1,78 @@
+STEP Dashboard Portugal – v38.9
+
+Objetivo:
+Aplicar no Painel Portugal as melhorias aprovadas no painel Brasil até a versão v37.05, mantendo o ambiente Portugal separado e usando variáveis/links Smartsheet PT.
+
+Melhorias aplicadas:
+
+1. Idioma PT/EN/ES
+- Adicionado site/i18n.js.
+- Incluído seletor de idioma no topo do painel.
+- Tradução dinâmica ampliada para Portal do Cliente, visão executiva, Curva S, Report do Cliente, detalhamento da obra, status e frases compostas.
+
+2. Logout limpo sem travar o login
+- Logout limpa sessão, sessionStorage e cookies visíveis.
+- Não apaga Service Worker nem Cache Storage operacional.
+- Mantém o cache local de projetos para preservar login rápido.
+- Backend auth-logout agora retorna headers no-store.
+
+3. Performance e cache
+- Atualizado app shell/PWA.
+- Reduzido risco de carregamento em branco.
+- Mantido cache operacional validado e revalidação em segundo plano.
+- Apontamentos continuam separados do carregamento principal do Smartsheet.
+
+4. Projetos em Desenvolvimento – Yinson
+- Incluída página site/client-under-development.html.
+- Incluídas funções:
+  - netlify/functions/client-under-dev.js
+  - netlify/functions/client-under-dev-image.js
+- Botão destacado no Portal do Cliente Yinson.
+- Colunas internas:
+  VESSEL, WORK ORDER, ID REPAIR, TAG NUMBER, SOB, DESCRIPTION, STATUS, IMAGEM.
+- Localização e Tipo removidos da visualização.
+- API detecta colunas de forma flexível por aliases.
+- Imagens restauradas com carregamento leve: metadados na lista e URL temporária apenas ao clicar em Ver imagem.
+
+5. Imagens por BSP / visão executiva do cliente
+- Incluídos endpoints auxiliares:
+  - client-bsp-images.js
+  - client-bsp-upload-image.js
+- Incluída página auxiliar client-bsp-images.html.
+- Defaults usam SMARTSHEET_SHEET_ID_PT / SMARTSHEET_TRACKING_SHEET_ID_PT em vez de ID fixo do Brasil.
+
+6. Ambiente Portugal preservado
+- app.js fixado em operationRegion PT.
+- index.html preserva seleção Portugal.
+- Smartsheet principal continua vindo de SMARTSHEET_SHEET_ID_PT / SMARTSHEET_SHEET_NAME_PT.
+- WIP Portugal continua vindo de SMARTSHEET_WIP_STEP_SHEET_ID_PT / SMARTSHEET_WIP_STEP_SHEET_NAME_PT.
+- IDs hardcoded do Brasil foram removidos das novas funções copiadas.
+
+Arquivos principais alterados/adicionados:
+- site/app.js
+- site/app.css
+- site/index.html
+- site/i18n.js
+- site/sw.js
+- site/client-under-development.html
+- site/client-bsp-images.html
+- site/_redirects
+- netlify/functions/auth-logout.js
+- netlify/functions/client-under-dev.js
+- netlify/functions/client-under-dev-image.js
+- netlify/functions/client-bsp-images.js
+- netlify/functions/client-bsp-upload-image.js
+- netlify/functions/drawing-detail.js
+- netlify/functions/project-detail.js
+- netlify/functions/projects-light.js
+- netlify/functions/sync-tracking-cache.js
+
+Validações locais:
+- node --check site/app.js: OK
+- node --check site/i18n.js: OK
+- node --check site/sw.js: OK
+- node --check funções novas/principais: OK
+- npm run lint: OK
+
+Observação:
+O npm run validate local acusou ausência de SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no sandbox, esperado fora do Netlify. O ZIP também aponta que o ideal é manter tokens Smartsheet em variáveis de ambiente do Netlify.
