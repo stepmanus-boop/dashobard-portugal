@@ -1,3 +1,5 @@
+// v38.15 Portugal: corrige linhas operacionais planas sem Project/parentId que eram ignoradas.
+// A conclusão exige todas as TAGs/ISOs reconhecidas como finalizadas; linhas 9%, 48%, etc. permanecem abertas.
 // v37.81: reconcilia alertas com o estado atual da BSP em todos os caminhos de cache; On Hold prevalece imediatamente.
 const fs = require('fs');
 const fsPromises = require('fs/promises');
@@ -13,6 +15,7 @@ const {
 const API_BASE = process.env.SMARTSHEET_API_BASE || "https://api.smartsheet.com/2.0";
 // Build Portugal: site separado do Brasil, lendo exclusivamente as fontes PT.
 const OPERATION_REGION = 'PT';
+const TRACKING_LOGIC_VERSION = 'pt-38.15-flat-operational-rows';
 const SHEET_NAME = process.env.SMARTSHEET_SHEET_NAME_PT || process.env.SMARTSHEET_SHEET_NAME || "Progress Tracking Sheet - Piping Fabrication PT";
 const SHEET_ID_ENV = process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_TRACKING_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID || "";
 const WIP_STEP_SHEET_NAME = process.env.SMARTSHEET_WIP_STEP_SHEET_NAME_PT || process.env.SMARTSHEET_WIP_STEP_SHEET_NAME || "WORK-IN-PROGRESS -PT";
@@ -308,9 +311,44 @@ function isTruthyValue(value) {
 
 function isCellTruthy(row, key) {
   const cell = getCellValue(row, key);
-  // Para checkbox do Smartsheet, o valor bruto booleano e a fonte mais confiavel.
-  if (isTruthyValue(cell.raw)) return true;
-  return isTruthyValue(cell.display);
+  // Checkbox Smartsheet: aceite somente valores próprios de checkbox.
+  // Textos de status como "Complete"/"Finished" não podem concluir uma TAG.
+  if (cell.raw === true || cell.raw === 1 || String(cell.raw || '').trim().toLowerCase() === 'true') return true;
+  const normalizedDisplay = String(cell.display ?? '')
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, "");
+  return ["yes", "sim", "true", "1", "x", "checked", "marcado", "verdadeiro", "✓", "✔", "☑"].includes(normalizedDisplay);
+}
+
+function getExplicitCellEntry(row, key) {
+  if (!row?.values) return null;
+  if (Object.prototype.hasOwnProperty.call(row.values, key)) return row.values[key] || { raw: null, display: null };
+  const target = normalizeColumnTitle(key);
+  if (!target) return null;
+  for (const [title, cell] of Object.entries(row.values)) {
+    if (normalizeColumnTitle(title) === target) return cell || { raw: null, display: null };
+  }
+  return null;
+}
+
+function hasExplicitCell(row, key) {
+  const cell = getExplicitCellEntry(row, key);
+  if (!cell) return false;
+  return cell.raw !== null && cell.raw !== undefined
+    || cell.display !== null && cell.display !== undefined;
+}
+
+function rowHasOperationalItemEvidence(row) {
+  if (!row) return false;
+  if (textValue(row, "Drawing") && textValue(row, "Drawing") !== "ISO") return true;
+  if (textValue(row, "Item")) return true;
+  if (hasExplicitCell(row, "% Overall Progress") || hasExplicitCell(row, "% Individual Progress")) return true;
+  if (hasExplicitCell(row, "Project Finished?")) return true;
+  if (textValue(row, "Project Status") || textValue(row, "PROJECT STATUS") || textValue(row, "Overall Project Status")) return true;
+  return STAGE_ORDER.some((stage) => hasExplicitCell(row, stage.key));
 }
 
 function excelSerialToDate(serial) {
@@ -627,22 +665,26 @@ function hasIncompleteProductionEvidence(stageValues, projectType = '', fallback
   return productionStageSnapshotsFromValues(stageValues, projectType, fallbackText).some((stage) => stage.hasEvidence && Number(stage.percent || 0) < 99.9);
 }
 
+function hasExplicitOpenProgressEvidence(item) {
+  if (!item) return false;
+  const overall = Number(item.overallProgress);
+  const individual = Number(item.individualProgress);
+  if (item.hasOverallProgressSource === true && Number.isFinite(overall) && overall < 99.9) return true;
+  if (item.hasIndividualProgressSource === true && Number.isFinite(individual) && individual < 99.9) return true;
+  const status = normalizeStatusText(item.sourceProjectStatus || item.projectStatus || '');
+  if (/\b(IN PROGRESS|ONGOING|OPEN|EM ANDAMENTO|EM EXECUCAO|EM PROGRESSO)\b/.test(status)) return true;
+  return false;
+}
+
 function isSpoolFinishedByState(spool) {
   if (!spool) return false;
-  const explicitFinished = Boolean(
-    spool.finished
-    || spool.projectFinishedFlag
-    || hasStageValue(spool.stageValues, "Project Finish Date")
-    || spool.uiState === "completed"
-    || spool.operationalState === "completed"
-    || spool.flow?.state === "completed"
-    || spool.flow?.status === "Finalizado"
-    || Number(spool.overallProgress || 0) >= 99.9
-    || Number(spool.individualProgress || 0) >= 99.9
+  const checkboxFinished = Boolean(
+    spool.projectFinishedFlag === true
+    || isStageBooleanDone(spool.stageValues, "Project Finished?")
   );
-  if (explicitFinished) return true;
-  if (hasIncompleteProductionEvidence(spool.stageValues, spool.projectType, [spool.iso, spool.drawing, spool.description].filter(Boolean).join(' '))) return false;
-  return false;
+  // Proteção adicional para inconsistência de dados: uma linha explicitamente em
+  // 9%, 48%, 65%, 99% ou "In Progress" nunca pode ser consolidada como finalizada.
+  return checkboxFinished && !hasExplicitOpenProgressEvidence(spool);
 }
 
 function paintingStatusFromPercent(value) {
@@ -688,13 +730,14 @@ function deriveOperationalStage(stageValues, fabricationStartDate, coatingPercen
   const coating = Number.isFinite(Number(coatingPercent)) ? Number(coatingPercent) : pct(stageValues, "Surface preparation and/or coating");
   const finalInspection = pct(stageValues, "Final Inspection");
   const packageDelivered = pct(stageValues, "Package and Delivered");
-  const projectFinishDate = hasStageValue(stageValues, "Project Finish Date");
   const projectFinished = isStageBooleanDone(stageValues, "Project Finished?");
   const normalizedProjectStatus = String(projectStatus || "").trim().toUpperCase().replace(/\s+/g, " ");
   const isHold = ["ON HOLD", "HOLD", "PAUSED", "EM ESPERA"].includes(normalizedProjectStatus);
   const includeHydro = isSpoolMaterialType(projectType, fallbackText);
 
-  if (finished || projectFinished || projectFinishDate) return makeFlow("Finalizado", "Enviado", 100, "completed", "completed");
+  // v38.15 Portugal: Project Finish Date é apenas uma data informativa.
+  // A finalização depende exclusivamente do checkbox Project Finished?.
+  if (finished || projectFinished) return makeFlow("Finalizado", "Enviado", 100, "completed", "completed");
 
   const coatingCompleted = coating >= 100;
   const finalInspectionStarted = finalInspection > 0;
@@ -1374,19 +1417,9 @@ function buildSpoolRow(row, parentSummary) {
   const stageValues = buildStageValues(row);
   const projectType = textValue(row, "Project Type") || textValue(parentSummary, "Project Type");
   const typeFallbackText = [drawingText, parsedDrawing.iso, parsedDrawing.description].filter(Boolean).join(' ');
-  const hasIncompleteStageEvidence = hasIncompleteProductionEvidence(stageValues, projectType, typeFallbackText);
-  // v38.13 Portugal: não concluir uma ISO apenas porque existe Project Finish Date
-  // ou percentual geral em 100% quando ainda há etapas produtivas abertas.
-  // Esta proteção já existia no painel Portugal e evita transformar toda a base em Completed.
-  const finished = Boolean(
-    !hasIncompleteStageEvidence
-    && (
-      projectFinishedFlag
-      || hasStageValue(stageValues, "Project Finish Date")
-      || overallProgress >= 99.9
-      || individualProgress >= 99.9
-    )
-  );
+  // v38.15 Portugal: conclusão da ISO segue estritamente o checkbox.
+  // Linhas com 100% mas checkbox vazio permanecem abertas, exatamente como no Tracking.
+  const finished = projectFinishedFlag === true;
   const flow = getOperationalFlow(stageValues, fabricationStartDate, parsePercent(row, "Surface preparation and/or coating") ?? 0, finished, textValue(row, "PROJECT STATUS"), projectType, typeFallbackText);
   const awaitingShipment = flow.state === "awaiting_shipment";
   const uiState = uiStateFromFlow(flow, finished);
@@ -1442,6 +1475,9 @@ function buildSpoolRow(row, parentSummary) {
     stageAlert: flow.stageStatus === "in_progress" || flow.stageStatus === "waiting",
     individualProgress,
     overallProgress,
+    hasOverallProgressSource: rowOverallProgress != null,
+    hasIndividualProgressSource: rowIndividualProgress != null,
+    sourceProjectStatus: textValue(row, "Project Status") || textValue(row, "PROJECT STATUS") || textValue(row, "Overall Project Status") || textValue(row, "Status"),
     milestones: progress.milestones,
     stageValues,
     finished: finished,
@@ -1535,12 +1571,22 @@ function mergeSpoolObservationEvidence(primarySpool, secondarySpool) {
 
 function chooseBestSpoolRow(currentSpool, nextSpool) {
   if (!currentSpool) return nextSpool;
-  const currentScore = getSpoolCompletenessScore(currentSpool);
-  const nextScore = getSpoolCompletenessScore(nextSpool);
 
+  const currentFinished = isSpoolFinishedByState(currentSpool);
+  const nextFinished = isSpoolFinishedByState(nextSpool);
   let selected = currentSpool;
   let discarded = nextSpool;
 
+  // Quando houver duplicidade/revisão da mesma TAG, qualquer registro ainda aberto
+  // prevalece sobre um registro antigo concluído. Assim 9%, 48%, etc. não somem no rollup.
+  if (currentFinished !== nextFinished) {
+    selected = currentFinished ? nextSpool : currentSpool;
+    discarded = currentFinished ? currentSpool : nextSpool;
+    return mergeSpoolObservationEvidence(selected, discarded);
+  }
+
+  const currentScore = getSpoolCompletenessScore(currentSpool);
+  const nextScore = getSpoolCompletenessScore(nextSpool);
   if (nextScore > currentScore) {
     selected = nextSpool;
     discarded = currentSpool;
@@ -1564,12 +1610,20 @@ function uiStateFromFlow(flow, allFinished = false) {
   return "in_progress";
 }
 
+function isProjectStrictlyFinished(project) {
+  if (!project) return false;
+  const spools = Array.isArray(project.spools) ? project.spools : [];
+  if (spools.length > 0) return spools.every(isSpoolFinishedByState);
+  return Boolean(project.projectFinishedFlag === true) && !hasExplicitOpenProgressEvidence(project);
+}
+
 function applyProjectSpoolRollup(project) {
   const spools = Array.isArray(project.spools) ? project.spools : [];
   const fallbackFlow = project.flow || makeFlow(project.currentStage || "AG. Emissão de detalhamento", project.operationalSector || "Engenharia", project.currentStagePercent || 0, project.currentStageStatus || "waiting", project.operationalState || project.uiState || "not_started");
   const summary = summarizeFlowItems(spools, fallbackFlow, project.quantitySpools || 1);
-  const explicitFinished = Boolean(project.finished || project.projectFinishedFlag || hasProjectFinishDateMarker(project) || isProjectStatusFinished(project.projectStatus));
-  const hasIncompleteStageEvidence = hasIncompleteProductionEvidence(project.stageValues, project.projectType, project.summaryDrawing) || spools.some((spool) => hasIncompleteProductionEvidence(spool.stageValues, spool.projectType || project.projectType, [spool.iso, spool.drawing, spool.description].filter(Boolean).join(' ')));
+  // v38.15 Portugal: a raiz só pode declarar conclusão explicitamente pelo checkbox.
+  // Datas, percentuais e textos "Complete" não substituem o Project Finished?.
+  const explicitFinished = Boolean(project.projectFinishedFlag === true);
   const allSpoolsFinishedByEvidence = spools.length > 0 && spools.every(isSpoolFinishedByState);
   
   // v32.2: Cálculo de progresso baseado estritamente nas ISOs (spools)
@@ -1627,16 +1681,20 @@ function applyProjectSpoolRollup(project) {
     project.overallProgress = weightedOverallFromStageValues(project.stageValues, project.projectType, project.summaryDrawing);
   }
 
-  // v38.13 Portugal: Project Finish Date/percentual geral não podem prevalecer
-  // sobre etapas abertas. Mantém a regra histórica validada no painel Portugal:
-  // só finaliza a BSP quando a evidência de conclusão é coerente com as ISOs/etapas.
-  const finalFinished = Boolean(
-    summary.allFinished
-    || (explicitFinished
-      && !hasIncompleteStageEvidence
-      && (spools.length === 0 || allSpoolsFinishedByEvidence))
-  );
-  const finalFlow = finalFinished ? makeFlow("Finalizado", "Enviado", 100, "completed", "completed") : summary.flow;
+  // v38.15 Portugal: a BSP só é concluída quando todas as TAGs/ISOs estão
+  // com o checkbox marcado. Para BSP sem filhos, vale o checkbox da linha raiz.
+  const finalFinished = isProjectStrictlyFinished(project);
+  const openSpools = spools.filter((spool) => !isSpoolFinishedByState(spool));
+  const openSummary = openSpools.length
+    ? summarizeFlowItems(openSpools, fallbackFlow, openSpools.length)
+    : null;
+  let finalFlow = finalFinished
+    ? makeFlow("Finalizado", "Enviado", 100, "completed", "completed")
+    : (openSummary?.flow || summary.flow || fallbackFlow);
+  if (!finalFinished && finalFlow?.state === "completed") {
+    const percent = Number(project.overallProgress || 0);
+    finalFlow = makeFlow("Em andamento", "Produção", percent, percent > 0 ? "in_progress" : "waiting", percent > 0 ? "in_production" : "not_started");
+  }
   
   project.demandSummary = summary;
   project.statusSummary = finalFinished ? "Finalizado" : summary.statusSummary;
@@ -1733,8 +1791,10 @@ function buildProject(summaryRow, childRows) {
   const projectText = textValue(summaryRow, "Project");
   const parts = parseProjectParts(projectText);
   const progress = deriveProgress(summaryRow);
-  const overallProgress = parsePercent(summaryRow, "% Overall Progress") ?? 0;
-  const individualProgress = parsePercent(summaryRow, "% Individual Progress") ?? overallProgress;
+  const rowOverallProgress = parsePercent(summaryRow, "% Overall Progress");
+  const rowIndividualProgress = parsePercent(summaryRow, "% Individual Progress");
+  const overallProgress = rowOverallProgress ?? 0;
+  const individualProgress = rowIndividualProgress ?? overallProgress;
   const projectFinishedFlag = isCellTruthy(summaryRow, "Project Finished?");
   const projectStatus = textValue(summaryRow, "Project Status") || textValue(summaryRow, "PROJECT STATUS") || textValue(summaryRow, "Overall Project Status") || textValue(summaryRow, "Status");
   const observations = textValue(summaryRow, "OBSERVATIONS");
@@ -1744,18 +1804,9 @@ function buildProject(summaryRow, childRows) {
   const clientFocalPointFromTracking = textValueAny(summaryRow, CLIENT_FOCAL_POINT_ALIASES);
   const summaryDrawing = textValue(summaryRow, "Drawing");
   const stageValues = buildStageValues(summaryRow);
-  const summaryHasIncompleteStageEvidence = hasIncompleteProductionEvidence(stageValues, projectType, summaryDrawing);
-  // v38.13 Portugal: a linha raiz só é finalizada quando não existem
-  // evidências de etapas produtivas/logísticas ainda abertas.
-  const summaryFinished = Boolean(
-    !summaryHasIncompleteStageEvidence
-    && (
-      projectFinishedFlag
-      || hasStageValue(stageValues, "Project Finish Date")
-      || overallProgress >= 99.9
-      || individualProgress >= 99.9
-    )
-  );
+  // v38.15 Portugal: a linha raiz também respeita exclusivamente o checkbox.
+  // O rollup posterior valida os filhos e impede que a raiz finalize TAGs abertas.
+  const summaryFinished = projectFinishedFlag === true;
   const flow = getOperationalFlow(stageValues, fabricationStartDate, coatingPercent, summaryFinished, projectStatus, projectType, summaryDrawing);
   const awaitingShipment = flow.state === "awaiting_shipment";
   const uiState = uiStateFromFlow(flow, summaryFinished) || projectUiState(projectStatus, overallProgress, summaryFinished, fabricationStartDate, awaitingShipment);
@@ -1819,6 +1870,9 @@ function buildProject(summaryRow, childRows) {
     currentStageAlert: flow.stageStatus === "in_progress" || flow.stageStatus === "waiting",
     individualProgress: spools.length > 0 ? 0 : individualProgress, // Será calculado no rollup se houver spools
     overallProgress: spools.length > 0 ? 0 : overallProgress,       // Será calculado no rollup se houver spools
+    hasOverallProgressSource: rowOverallProgress != null,
+    hasIndividualProgressSource: rowIndividualProgress != null,
+    sourceProjectStatus: projectStatus,
     projectStatus,
     observations,
     jobProcessStatus: textValue(summaryRow, "Job Process Status") || progress.currentStage.label,
@@ -1903,7 +1957,24 @@ function buildProjects(rows) {
     // podem não vir como children do Smartsheet e também podem não ter coluna Drawing.
     // Se a linha atual tem o mesmo número da última BSP aberta, ela deve entrar como item/tag
     // da BSP atual, não abrir uma BSP duplicada nem ser ignorada.
-    if (currentSummary && rowProjectNumber && currentProjectNumber && rowProjectNumber === currentProjectNumber && !row.parentId) {
+    const sameProjectFlatRow = Boolean(
+      currentSummary
+      && rowProjectNumber
+      && currentProjectNumber
+      && rowProjectNumber === currentProjectNumber
+      && !row.parentId
+    );
+    const blankProjectFlatOperationalRow = Boolean(
+      currentSummary
+      && !row.parentId
+      && !rowProjectNumber
+      && rowHasOperationalItemEvidence(row)
+    );
+
+    // Portugal usa também blocos planos: a linha-mãe contém o Project e as linhas
+    // seguintes podem deixar Project e parentId vazios. Essas TAGs eram ignoradas,
+    // fazendo a checkbox da linha-mãe concluir toda a BSP mesmo com linhas em 9%/48%.
+    if (sameProjectFlatRow || blankProjectFlatOperationalRow) {
       const lastProject = projects[projects.length - 1];
       if (lastProject) {
         const spool = buildSpoolRow(row, currentSummary);
@@ -2192,37 +2263,12 @@ function hasProjectFinishedBooleanMarker(project) {
 
 function areAllProjectSpoolsFinished(project) {
   const spools = Array.isArray(project?.spools) ? project.spools : [];
-  return spools.length > 0 && spools.every((spool) => !hasIncompleteProductionEvidence(spool?.stageValues, spool?.projectType, [spool?.iso, spool?.drawing, spool?.description].filter(Boolean).join(' ')) && Boolean(
-    spool?.finished
-    || spool?.projectFinishedFlag
-    || spool?.uiState === "completed"
-    || spool?.operationalState === "completed"
-    || spool?.flow?.state === "completed"
-    || spool?.flow?.status === "Finalizado"
-    || isProjectStatusFinished(spool?.projectStatus)
-    || isProjectStatusFinished(spool?.status)
-    || isProjectStatusFinished(spool?.currentStatus)
-    || isMeaningfulFinishValue(spool?.stageValues?.["Project Finish Date"])
-  ));
+  return spools.length > 0 && spools.every(isSpoolFinishedByState);
 }
 
 function hasProjectFinishedMarker(project) {
-  if (!project) return false;
-  if (hasIncompleteProductionEvidence(project.stageValues, project.projectType, project.summaryDrawing) || (Array.isArray(project.spools) && project.spools.some((spool) => hasIncompleteProductionEvidence(spool.stageValues, spool.projectType || project.projectType, [spool.iso, spool.drawing, spool.description].filter(Boolean).join(' '))))) return false;
-  return Boolean(
-    hasProjectFinishedBooleanMarker(project)
-    || hasProjectFinishDateMarker(project)
-    || project.uiState === "completed"
-    || project.operationalState === "completed"
-    || project.flow?.state === "completed"
-    || isProjectStatusFinished(project.projectStatus)
-    || isProjectStatusFinished(project.status)
-    || isProjectStatusFinished(project.currentStage)
-    || isProjectStatusFinished(project.currentStatus)
-    || isProjectStatusFinished(project.statusSummary)
-    || isProjectStatusFinished(project.flow?.status)
-    || areAllProjectSpoolsFinished(project)
-  );
+  // Cards, peso e status usam exatamente a mesma regra do rollup.
+  return isProjectStrictlyFinished(project);
 }
 
 function getOpenFlowItemsForStats(project) {
@@ -2346,7 +2392,9 @@ function getProjectExclusiveCardBucket(project) {
   if (isProjectPending(project)) return "pending";
   if (hasProjectFinishedMarker(project)) return "finished";
   const delayed = getProjectDelayedStageStats(project);
-  if (delayed.bucket === "not_started") return "not_started";
+  // Se a planilha informou progresso geral/individual acima de zero, o projeto já
+  // começou mesmo quando nenhuma etapa detalhada foi preenchida na mesma linha.
+  if (delayed.bucket === "not_started" && Number(project.overallProgress || project.individualProgress || 0) <= 0) return "not_started";
   return "started";
 }
 
@@ -3456,10 +3504,14 @@ async function readLoginCacheOnlyPayloadForSession(session = {}, reason = 'login
 }
 
 
+function decorateTrackingVersion(sheetVersion) {
+  return `${String(sheetVersion || '')}|${TRACKING_LOGIC_VERSION}`;
+}
+
 async function fetchCurrentTrackingSheetVersion(options = {}) {
   const sheetId = await resolveSheetId();
-  const version = await fetchSheetVersion(sheetId, options);
-  return { sheetId, version };
+  const sheetVersion = await fetchSheetVersion(sheetId, options);
+  return { sheetId, sheetVersion, version: decorateTrackingVersion(sheetVersion) };
 }
 
 async function buildPayload(options = {}) {
@@ -3508,8 +3560,10 @@ async function buildPayload(options = {}) {
 
   const sheetId = await resolveSheetId();
   let version;
+  let sheetVersion;
   try {
-    version = await fetchSheetVersion(sheetId);
+    sheetVersion = await fetchSheetVersion(sheetId);
+    version = decorateTrackingVersion(sheetVersion);
     cache.lastVersionCheck = Date.now();
   } catch (error) {
     const fallbackPayload = !force ? await readBestAvailableFullPayload('version-check-failed') : null;
@@ -3555,6 +3609,8 @@ async function buildPayload(options = {}) {
       sheetId,
       sheetName: sheet.name || cache.sheetName || SHEET_NAME,
       version,
+      sheetVersion,
+      logicVersion: TRACKING_LOGIC_VERSION,
       wipStepSheetName: wipPoData.sheetName || WIP_STEP_SHEET_NAME,
       wipStepVersion: wipPoData.version || null,
       wipStepPoAvailable: Boolean(wipPoData.available),
