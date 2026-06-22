@@ -511,7 +511,7 @@ async function enrichUpdatesWithTracking(updates) {
   // basta consultar diretamente a planilha Progress Tracking Sheet uma única vez e
   // rodar um dry-run de atualização, sem gravar nada.
   try {
-    const inspection = await inspectStageUpdatesInTracking(list);
+    const inspection = await inspectStageUpdatesInTracking(list, { forceFreshSheet: true });
     const byId = new Map((inspection.results || []).map((result) => [String(result.id || ''), result]));
     return list.map((item) => {
       const result = byId.get(String(item.id || ''));
@@ -710,6 +710,11 @@ async function createSingleUpdate(payload, session, existingUpdates = null) {
   const progress = Number(payload.progress || 0);
   const completionDate = String(payload.completionDate || '').trim();
   const note = String(payload.note || '').trim();
+  const fallbackProjectNumber = String(payload.projectNumber || '').trim();
+  const fallbackProjectDisplay = String(payload.projectDisplay || fallbackProjectNumber || '').trim();
+  const fallbackClient = String(payload.client || '').trim();
+  const fallbackSpoolDescription = String(payload.spoolDescription || '').trim();
+  const fallbackSpoolStage = String(payload.spoolStage || '').trim();
   const actionType = String(payload.actionType || 'advance').trim().toLowerCase() === 'review' ? 'review' : 'advance';
   const actorSector = getActorSector(session);
   const sector = getRequestedStageSector(payload, session);
@@ -723,14 +728,25 @@ async function createSingleUpdate(payload, session, existingUpdates = null) {
   if (!PROGRESS_OPTIONS.includes(progress)) {
     throw new Error('Selecione um avanço válido: 25%, 50%, 75% ou 100%.');
   }
-  const { project, spool } = await findProjectAndSpool(projectRowId, spoolIso, { allowFallback: false });
-  if (!project || !spool) {
-    const err = new Error('BSP ou spool não localizado para este apontamento.');
-    err.statusCode = 404;
-    throw err;
+  let project = null;
+  let spool = null;
+  let lookupWarning = '';
+  try {
+    const found = await findProjectAndSpool(projectRowId, spoolIso, { allowFallback: true, preferCache: true, timeoutMs: 1800 });
+    project = found?.project || null;
+    spool = found?.spool || null;
+  } catch (error) {
+    lookupWarning = error?.message || 'Consulta de BSP/spool indisponível no momento.';
+    console.warn('Apontamento seguirá sem bloqueio de lookup em tempo real:', lookupWarning);
   }
-  ensureSpoolReleasedForSector(project, spool, sector, session);
-  const trackingProgress = getTrackingProgressForSector(spool, sector);
+
+  if (project && spool) {
+    ensureSpoolReleasedForSector(project, spool, sector, session);
+  } else {
+    lookupWarning = lookupWarning || 'BSP/spool não localizado rapidamente no Tracking; apontamento registrado para validação posterior do PCP.';
+  }
+
+  const trackingProgress = spool ? getTrackingProgressForSector(spool, sector) : null;
   const trackingMatched = trackingProgress != null && trackingProgress >= progress;
   const updates = existingUpdates || await listUpdates();
   const pendingExists = updates.find((item) =>
@@ -754,11 +770,11 @@ async function createSingleUpdate(payload, session, existingUpdates = null) {
   const record = {
     id: `stg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     projectRowId,
-    projectNumber: project.projectNumber || project.projectDisplay || `Projeto ${projectRowId}`,
-    projectDisplay: project.projectDisplay || project.projectNumber || `Projeto ${projectRowId}`,
-    client: project.client || '',
+    projectNumber: project?.projectNumber || project?.projectDisplay || fallbackProjectNumber || `Projeto ${projectRowId}`,
+    projectDisplay: project?.projectDisplay || project?.projectNumber || fallbackProjectDisplay || fallbackProjectNumber || `Projeto ${projectRowId}`,
+    client: project?.client || fallbackClient || '',
     spoolIso,
-    spoolDescription: spool.description || spool.drawing || '',
+    spoolDescription: spool?.description || spool?.drawing || fallbackSpoolDescription || fallbackSpoolStage || '',
     sector,
     progress,
     completionDate: completionDate || (progress === 100 ? now.slice(0, 10) : ''),
@@ -767,7 +783,8 @@ async function createSingleUpdate(payload, session, existingUpdates = null) {
     trackingCheckedAt: now,
     trackingProgress: trackingProgress == null ? null : Number(trackingProgress.toFixed(2)),
     trackingMatched,
-    trackingStatus: trackingProgress == null ? 'not_found' : (trackingMatched ? 'matched' : 'waiting'),
+    trackingStatus: spool ? (trackingProgress == null ? 'pending_check' : (trackingMatched ? 'matched' : 'waiting')) : 'pending_check',
+    trackingLookupWarning: lookupWarning,
     createdBy: session.username || '',
     createdByName: session.name || session.username || 'Usuário',
     createdAt: now,
@@ -777,8 +794,16 @@ async function createSingleUpdate(payload, session, existingUpdates = null) {
     resolutionNote: '',
   };
   if (isSupabaseConfigured()) {
-    const saved = await createStageUpdate(record);
-    return saved || record;
+    try {
+      const saved = await createStageUpdate(record);
+      return saved || record;
+    } catch (error) {
+      console.warn('Falha ao gravar apontamento no Supabase; salvando fallback JSON:', error?.message || error);
+      record.storageWarning = 'Supabase indisponível; apontamento salvo no fallback operacional.';
+      updates.unshift(normalizeUpdateForJson(record));
+      await saveUpdates(updates);
+      return record;
+    }
   }
   updates.unshift(record);
   return record;
@@ -917,7 +942,7 @@ async function concludeTrackingOkOnly(body, session) {
   let blockedErrors = [];
 
   if (advanceItems.length) {
-    const dryRun = await applyStageUpdatesToTracking(advanceItems, { dryRun: true });
+    const dryRun = await applyStageUpdatesToTracking(advanceItems, { dryRun: true, forceFreshSheet: true });
     eligibleAdvance = advanceItems.filter((item) => {
       const result = (dryRun.results || []).find((entry) => String(entry.id) === String(item.id));
       return result?.trackingOk === true;
@@ -1003,11 +1028,48 @@ exports.handler = async (event) => {
             STAGE_ENRICH_TIMEOUT_MS,
             'O Smartsheet demorou para responder. A lista principal foi mantida e você pode tentar novamente com menos itens selecionados.'
           );
+
+          // v37.45: se a conferência direta identificou que o Tracking já está no
+          // avanço solicitado, a pendência deve sair da fila do PCP automaticamente.
+          // Antes, o front filtrava apenas em memória; em alguns casos o registro
+          // voltava como pendente no próximo carregamento. Agora persistimos a
+          // resolução no Supabase/JSON e já devolvemos o item como resolvido para
+          // a tela atualizar imediatamente.
+          let autoResolvedCount = 0;
+          const autoResolvedAt = new Date().toISOString();
+          const autoResolvedIds = new Set();
+          const resolutionNote = 'Concluído automaticamente pelo PCP porque o Tracking já estava com avanço igual ou superior.';
+          for (const item of enriched) {
+            if (isPendingStatus(item?.status) && !isReviewStatus(item?.status) && item?.trackingMatched === true) {
+              const saved = await resolveStageUpdateRecord(item.id, updates, session, resolutionNote);
+              if (saved) {
+                autoResolvedCount += 1;
+                autoResolvedIds.add(String(item.id || ''));
+              }
+            }
+          }
+          if (autoResolvedCount && !isSupabaseConfigured()) await saveUpdates(updates);
+
+          const finalUpdates = enriched.map((item) => {
+            if (!autoResolvedIds.has(String(item?.id || ''))) return item;
+            return {
+              ...item,
+              status: 'resolved_advance',
+              resolvedBy: session.username || '',
+              resolvedByName: session.name || session.username || 'PCP',
+              resolvedAt: autoResolvedAt,
+              resolutionNote,
+              trackingMatched: true,
+              trackingStatus: 'matched',
+            };
+          });
+
           return jsonResponse(200, {
             ok: true,
-            updates: enriched,
+            updates: finalUpdates,
             warning: listWarning,
             trackingValidationMode: 'direct',
+            autoResolvedCount,
           });
         } catch (error) {
           const warning = error.message || 'Não foi possível validar o Tracking agora.';

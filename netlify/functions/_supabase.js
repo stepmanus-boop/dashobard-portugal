@@ -1,17 +1,67 @@
 const { normalizeSectorList, normalizeText, normalizeSectorValue, hashPassword, verifyPassword } = require('./_auth');
 
-const SUPABASE_URL = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
-const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY || '');
-const SUPABASE_ANON_KEY = String(process.env.SUPABASE_ANON_KEY || '');
+function cleanEnvSecret(value = '') {
+  return String(value || '')
+    .trim()
+    .replace(/^Bearer\s+/i, '')
+    .replace(/^['"]|['"]$/g, '')
+    .trim();
+}
+
+const SUPABASE_URL = String(
+  process.env.SUPABASE_URL ||
+  process.env.VITE_SUPABASE_URL ||
+  ''
+).trim().replace(/\/$/, '');
+
+const SUPABASE_SERVICE_ROLE_KEY = cleanEnvSecret(
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_SECRET_KEY ||
+  process.env.SB_SECRET_KEY ||
+  process.env.SUPABASE_SECRET ||
+  ''
+);
+
+const SUPABASE_ANON_KEY = cleanEnvSecret(
+  process.env.SUPABASE_ANON_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  process.env.SUPABASE_PUBLISHABLE_KEY ||
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  ''
+);
+
+
+const SUPABASE_FETCH_TIMEOUT_MS = Math.max(1500, Number(process.env.SUPABASE_FETCH_TIMEOUT_MS || 6500));
+const SUPABASE_FETCH_RETRIES = Math.max(1, Number(process.env.SUPABASE_FETCH_RETRIES || 1));
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientFetchError(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  return error?.name === 'AbortError'
+    || message.includes('fetch failed')
+    || message.includes('terminated')
+    || message.includes('timeout')
+    || message.includes('econnreset')
+    || message.includes('socket')
+    || message.includes('network');
+}
+
+function getSupabaseApiKey() {
+  return SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
+}
 
 function isSupabaseConfigured() {
-  return Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+  return Boolean(SUPABASE_URL && getSupabaseApiKey());
 }
 
 function getSupabaseHeaders(prefer = '') {
+  const key = getSupabaseApiKey();
   const headers = {
-    apikey: SUPABASE_SERVICE_ROLE_KEY,
-    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    apikey: key,
+    Authorization: `Bearer ${key}`,
     'Content-Type': 'application/json',
   };
   if (prefer) headers.Prefer = prefer;
@@ -22,20 +72,66 @@ async function supabaseFetch(path, options = {}) {
   if (!isSupabaseConfigured()) {
     throw new Error('Supabase não configurado. Defina SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no Netlify.');
   }
-  const response = await fetch(`${SUPABASE_URL}${path}`, {
-    ...options,
-    headers: {
-      ...getSupabaseHeaders(),
-      ...(options.headers || {}),
-    },
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Supabase ${response.status}: ${text}`);
+
+  const url = `${SUPABASE_URL}${path}`;
+  const timeoutMs = Math.max(1500, Number(options.timeoutMs || SUPABASE_FETCH_TIMEOUT_MS));
+  const attempts = Math.max(1, Number(options.retries || SUPABASE_FETCH_RETRIES));
+  const externalSignal = options.signal;
+
+  const { timeoutMs: _ignoredTimeout, retries: _ignoredRetries, signal: _ignoredSignal, ...fetchOptions } = options;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    const onAbort = () => controller.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) controller.abort();
+      else externalSignal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    try {
+      const response = await fetch(url, {
+        ...fetchOptions,
+        signal: controller.signal,
+        headers: {
+          ...getSupabaseHeaders(),
+          ...(fetchOptions.headers || {}),
+        },
+      });
+
+      clearTimeout(timer);
+      if (externalSignal) externalSignal.removeEventListener('abort', onAbort);
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Supabase ${response.status}: ${text}`);
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) return response.json();
+      return response.text();
+    } catch (error) {
+      clearTimeout(timer);
+      if (externalSignal) externalSignal.removeEventListener('abort', onAbort);
+
+      lastError = error;
+      const transient = isTransientFetchError(error);
+      const isLastAttempt = attempt >= attempts;
+
+      if (!transient || isLastAttempt) {
+        const reason = error?.name === 'AbortError'
+          ? `timeout após ${timeoutMs}ms`
+          : (error?.message || String(error));
+        throw new Error(`Supabase falhou em ${path}: ${reason}`);
+      }
+
+      await wait(350 * attempt);
+    }
   }
-  const contentType = response.headers.get('content-type') || '';
-  if (contentType.includes('application/json')) return response.json();
-  return response.text();
+
+  throw lastError || new Error(`Supabase falhou em ${path}`);
 }
 
 function parseClientPlatformImagesFallback(value) {
@@ -63,20 +159,43 @@ function isMissingClientPlatformImagesColumn(error) {
   return message.includes('client_platform_images') && (message.includes('PGRST204') || message.includes('schema cache') || message.includes('Could not find'));
 }
 
+function isMissingCanViewClientPanelColumn(error) {
+  const message = String(error?.message || error || '');
+  return message.includes('can_view_client_panel') && (message.includes('PGRST204') || message.includes('schema cache') || message.includes('Could not find'));
+}
+
 async function supabaseWriteWithClientPlatformFallback(path, options, payload, fallbackImages) {
-  try {
-    return await supabaseFetch(path, options);
-  } catch (error) {
-    if (!isMissingClientPlatformImagesColumn(error)) throw error;
-    const retryPayload = { ...(payload || {}) };
-    delete retryPayload.client_platform_images;
-    const fallback = makeClientPlatformImagesFallback(fallbackImages);
-    if (fallback) retryPayload.client_platform_image_url = fallback;
-    return supabaseFetch(path, {
-      ...options,
-      body: JSON.stringify(retryPayload),
-    });
+  let retryPayload = { ...(payload || {}) };
+  let platformFallbackApplied = false;
+  let canViewFallbackApplied = false;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await supabaseFetch(path, {
+        ...options,
+        body: JSON.stringify(retryPayload),
+      });
+    } catch (error) {
+      if (isMissingClientPlatformImagesColumn(error) && !platformFallbackApplied) {
+        platformFallbackApplied = true;
+        delete retryPayload.client_platform_images;
+        const fallback = makeClientPlatformImagesFallback(fallbackImages);
+        if (fallback) retryPayload.client_platform_image_url = fallback;
+        continue;
+      }
+      if (isMissingCanViewClientPanelColumn(error) && !canViewFallbackApplied) {
+        canViewFallbackApplied = true;
+        delete retryPayload.can_view_client_panel;
+        continue;
+      }
+      throw error;
+    }
   }
+
+  return supabaseFetch(path, {
+    ...options,
+    body: JSON.stringify(retryPayload),
+  });
 }
 
 function stripHiddenRegionSuffix(username = '') {
@@ -106,6 +225,7 @@ function mapUser(row) {
     alertSectors: normalizeSectorList(row.sector || '', Array.isArray(row.alert_sectors) ? row.alert_sectors : []),
     projectPmAliases: Array.isArray(row.project_pm_aliases) ? row.project_pm_aliases.filter(Boolean) : [],
     qualityCompetencies: Array.isArray(row.quality_competencies) ? row.quality_competencies.filter(Boolean) : [],
+    canViewClientPanel: row.can_view_client_panel === true,
     clientKey: row.client_key || '',
     operationRegion: ['BR','PT'].includes(String(row.operation_region || '').toUpperCase()) ? String(row.operation_region).toUpperCase() : 'PT',
     siteKey: ['BR','PT'].includes(String(row.site_key || row.operation_region || '').toUpperCase()) ? String(row.site_key || row.operation_region).toUpperCase() : 'PT',
@@ -178,7 +298,7 @@ function mapAck(row) {
     userId: row.user_id,
     username: row.username,
     sector: normalizeSectorValue(row.sector),
-    acknowledgedAt: row.read_at,
+    acknowledgedAt: row.read_at || row.acknowledged_at || row.created_at || null,
   };
 }
 
@@ -187,6 +307,7 @@ function mapStageUpdate(row) {
   if (!row) return null;
   return {
     id: row.id,
+    region: row.region || '',
     projectRowId: Number(row.project_row_id || 0),
     projectNumber: row.project_number || '',
     projectDisplay: row.project_display || '',
@@ -239,23 +360,34 @@ function isUniversalAccessRow(row = {}) {
 
 async function getUserByUsername(username, options = {}) {
   const cleanUsername = stripHiddenRegionSuffix(String(username || '').trim());
-  const q = encodeURIComponent(cleanUsername);
+  if (!cleanUsername) return null;
+
   const region = String(options.operationRegion || options.region || options.siteKey || '').trim().toUpperCase();
   const hiddenUsername = region ? buildHiddenRegionUsername(cleanUsername, region) : '';
 
-  const queryParts = [cleanUsername];
-  if (hiddenUsername && hiddenUsername !== cleanUsername) queryParts.push(hiddenUsername);
-
+  const candidates = Array.from(new Set([cleanUsername, hiddenUsername].filter(Boolean)));
   const rows = [];
-  for (const candidate of queryParts) {
-    const encoded = encodeURIComponent(candidate);
-    const result = await supabaseFetch(`/rest/v1/users?select=*&username=eq.${encoded}`);
+
+  // Busca exata em uma única chamada para evitar timeout no login.
+  const exactFilter = candidates
+    .map((candidate) => `username.eq.${encodeURIComponent(candidate)}`)
+    .join(',');
+
+  if (exactFilter) {
+    const result = await supabaseFetch(`/rest/v1/users?select=*&or=(${exactFilter})&limit=10`, {
+      timeoutMs: 6500,
+      retries: 1,
+    });
     if (Array.isArray(result)) rows.push(...result);
   }
 
-  // Fallback: se não achou, busca todos com prefixo visual para detectar legado.
+  // Fallback legado: só roda se não achou nada na busca exata.
   if (!rows.length) {
-    const fallback = await supabaseFetch(`/rest/v1/users?select=*&username=ilike.${q}%`);
+    const prefix = encodeURIComponent(`${cleanUsername}%`);
+    const fallback = await supabaseFetch(`/rest/v1/users?select=*&username=ilike.${prefix}&limit=10`, {
+      timeoutMs: 6500,
+      retries: 1,
+    });
     if (Array.isArray(fallback)) rows.push(...fallback);
   }
 
@@ -297,10 +429,11 @@ async function insertUser(input) {
     alert_sectors: input.alertSectors || [],
     project_pm_aliases: Array.isArray(input.projectPmAliases) ? input.projectPmAliases : [],
     quality_competencies: Array.isArray(input.qualityCompetencies) ? input.qualityCompetencies : [],
+    can_view_client_panel: input.canViewClientPanel === true,
     client_key: input.clientKey || '',
-    operation_region: String(input.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT',
-    site_key: String(input.siteKey || input.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT',
-    portal_site: String(input.portalSite || input.siteKey || input.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT',
+    operation_region: 'PT',
+    site_key: 'PT',
+    portal_site: 'PT',
     client_name: input.clientName || input.clientKey || '',
     client_logo_url: input.clientLogoUrl || '',
     client_platform_image_url: input.clientPlatformImageUrl || '',
@@ -327,10 +460,11 @@ async function updateUser(userId, updates) {
   if ('alertSectors' in updates) payload.alert_sectors = updates.alertSectors || [];
   if ('projectPmAliases' in updates) payload.project_pm_aliases = Array.isArray(updates.projectPmAliases) ? updates.projectPmAliases : [];
   if ('qualityCompetencies' in updates) payload.quality_competencies = Array.isArray(updates.qualityCompetencies) ? updates.qualityCompetencies : [];
+  if ('canViewClientPanel' in updates) payload.can_view_client_panel = updates.canViewClientPanel === true;
   if ('clientKey' in updates) payload.client_key = updates.clientKey || '';
-  if ('operationRegion' in updates) payload.operation_region = String(updates.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT';
-  if ('siteKey' in updates) payload.site_key = String(updates.siteKey || updates.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT';
-  if ('portalSite' in updates || 'operationRegion' in updates || 'siteKey' in updates) payload.portal_site = String(updates.portalSite || updates.siteKey || updates.operationRegion || 'PT').toUpperCase() === 'BR' ? 'BR' : 'PT';
+  if ('operationRegion' in updates) payload.operation_region = 'PT';
+  if ('siteKey' in updates) payload.site_key = 'PT';
+  if ('portalSite' in updates || 'operationRegion' in updates || 'siteKey' in updates) payload.portal_site = 'PT';
   if ('clientName' in updates) payload.client_name = updates.clientName || updates.clientKey || '';
   if ('clientLogoUrl' in updates) payload.client_logo_url = updates.clientLogoUrl || '';
   if ('clientPlatformImageUrl' in updates) payload.client_platform_image_url = updates.clientPlatformImageUrl || '';
@@ -447,8 +581,34 @@ async function createManualAlert(input) {
   return mapAlert(Array.isArray(rows) ? rows[0] : null);
 }
 
+const ACK_TABLES = ['alert_acknowledgements', 'alert_acknowledgments'];
+
+function isMissingSupabaseRelation(error, tableName = '') {
+  const message = String(error?.message || error || '');
+  return message.includes(tableName)
+    || message.includes('PGRST205')
+    || message.includes('PGRST204')
+    || message.includes('Could not find')
+    || message.includes('schema cache')
+    || message.includes('does not exist')
+    || message.includes('42P01');
+}
+
+async function supabaseFetchAckTable(pathBuilder, options = {}) {
+  let lastError = null;
+  for (const table of ACK_TABLES) {
+    try {
+      return await supabaseFetch(pathBuilder(table), options);
+    } catch (error) {
+      lastError = error;
+      if (!isMissingSupabaseRelation(error, table)) throw error;
+    }
+  }
+  throw lastError || new Error('Tabela de confirmação de alertas não encontrada.');
+}
+
 async function listAcknowledgements() {
-  const rows = await supabaseFetch('/rest/v1/alert_acknowledgements?select=*&order=read_at.desc');
+  const rows = await supabaseFetchAckTable((table) => `/rest/v1/${table}?select=*&order=read_at.desc`);
   return (Array.isArray(rows) ? rows : []).map(mapAck);
 }
 
@@ -458,8 +618,9 @@ async function addAcknowledgement(input) {
     user_id: input.userId || null,
     username: input.username || '',
     sector: input.sector || '',
+    read_at: new Date().toISOString(),
   };
-  const rows = await supabaseFetch('/rest/v1/alert_acknowledgements?select=*', {
+  const rows = await supabaseFetchAckTable((table) => `/rest/v1/${table}?select=*`, {
     method: 'POST',
     headers: getSupabaseHeaders('return=representation'),
     body: JSON.stringify(payload),
@@ -470,7 +631,7 @@ async function addAcknowledgement(input) {
 async function findAcknowledgement(alertId, userId) {
   const a = encodeURIComponent(String(alertId || '').trim());
   const u = encodeURIComponent(String(userId || '').trim());
-  const rows = await supabaseFetch(`/rest/v1/alert_acknowledgements?select=*&alert_id=eq.${a}&user_id=eq.${u}&limit=1`);
+  const rows = await supabaseFetchAckTable((table) => `/rest/v1/${table}?select=*&alert_id=eq.${a}&user_id=eq.${u}&limit=1`);
   return mapAck(Array.isArray(rows) ? rows[0] : null);
 }
 
@@ -568,7 +729,7 @@ async function removePushSubscription(endpoint) {
 
 async function listStageUpdates() {
   try {
-    const rows = await supabaseFetch('/rest/v1/stage_updates?select=*&order=created_at.desc');
+    const rows = await supabaseFetch('/rest/v1/stage_updates?select=*&region=eq.PT&order=created_at.desc');
     return (Array.isArray(rows) ? rows : []).map(mapStageUpdate);
   } catch (error) {
     if (String(error.message || '').includes('stage_updates')) return [];
@@ -579,6 +740,7 @@ async function listStageUpdates() {
 async function createStageUpdate(input) {
   const payload = {
     id: input.id,
+    region: 'PT',
     project_row_id: Number(input.projectRowId || 0),
     project_number: input.projectNumber || '',
     project_display: input.projectDisplay || '',
@@ -612,7 +774,7 @@ async function deleteStageUpdates(updateIds = []) {
     .filter(Boolean)));
   for (const id of ids) {
     const q = encodeURIComponent(id);
-    await supabaseFetch(`/rest/v1/stage_updates?id=eq.${q}`, {
+    await supabaseFetch(`/rest/v1/stage_updates?id=eq.${q}&region=eq.PT`, {
       method: 'DELETE',
       headers: getSupabaseHeaders(),
     });
@@ -628,7 +790,7 @@ async function updateStageUpdate(updateId, updates) {
   if ('resolvedByName' in updates) payload.resolved_by_name = updates.resolvedByName || '';
   if ('resolvedAt' in updates) payload.resolved_at = updates.resolvedAt || null;
   if ('resolutionNote' in updates) payload.resolution_note = updates.resolutionNote || '';
-  const rows = await supabaseFetch(`/rest/v1/stage_updates?id=eq.${q}&select=*`, {
+  const rows = await supabaseFetch(`/rest/v1/stage_updates?id=eq.${q}&region=eq.PT&select=*`, {
     method: 'PATCH',
     headers: getSupabaseHeaders('return=representation'),
     body: JSON.stringify(payload),
@@ -774,13 +936,13 @@ function mapClientBspOverride(row) {
 
 async function listClientBspOverrides() {
   try {
-    const rows = await supabaseFetch('/rest/v1/client_bsp_overrides?select=*&order=updated_at.desc');
+    const rows = await supabaseFetch('/rest/v1/client_bsp_overrides?select=*&region=eq.PT&order=updated_at.desc');
     return (Array.isArray(rows) ? rows : [])
       .map(mapClientBspOverride)
       .filter(Boolean)
       .filter((item) => {
         const region = String(item.region || '').trim().toUpperCase();
-        return !region || region === 'PT';
+        return region === 'PT';
       });
   } catch (error) {
     if (String(error.message || '').includes('client_bsp_overrides')) return [];
@@ -823,7 +985,7 @@ async function upsertClientBspOverride(input = {}) {
   if (!payload.project_row_id) throw new Error('BSP sem identificador de linha.');
   if (input.createdBy) payload.created_by = input.createdBy;
   if (input.createdByName) payload.created_by_name = input.createdByName;
-  const rows = await supabaseFetch('/rest/v1/client_bsp_overrides?on_conflict=project_row_id&select=*', {
+  const rows = await supabaseFetch('/rest/v1/client_bsp_overrides?on_conflict=region,project_row_id&select=*', {
     method: 'POST',
     headers: getSupabaseHeaders('resolution=merge-duplicates,return=representation'),
     body: JSON.stringify(payload),
@@ -834,7 +996,7 @@ async function upsertClientBspOverride(input = {}) {
 async function deleteClientBspOverride(id) {
   const q = encodeURIComponent(String(id || '').trim());
   if (!q) return true;
-  await supabaseFetch(`/rest/v1/client_bsp_overrides?id=eq.${q}`, {
+  await supabaseFetch(`/rest/v1/client_bsp_overrides?id=eq.${q}&region=eq.PT`, {
     method: 'DELETE',
     headers: getSupabaseHeaders(),
   });
@@ -845,7 +1007,10 @@ async function deleteClientBspOverride(id) {
 module.exports = {
   SUPABASE_URL,
   SUPABASE_ANON_KEY,
+  SUPABASE_SERVICE_ROLE_KEY,
   isSupabaseConfigured,
+  getSupabaseHeaders,
+  supabaseFetch,
   listUsers,
   getUserByUsername,
   getUserById,

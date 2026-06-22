@@ -1,17 +1,24 @@
+// v37.81: reconcilia alertas com o estado atual da BSP em todos os caminhos de cache; On Hold prevalece imediatamente.
 const fs = require('fs');
 const fsPromises = require('fs/promises');
 const path = require('path');
 const { isSupabaseConfigured, getUserById } = require('./_supabase');
+const { ensureIsoQrCodesForPayload } = require('./_isoQrCodes');
 const { jsonResponse, requireSession } = require('./_auth');
+const {
+  readTrackingCache,
+  writeTrackingCache,
+  TRACKING_CACHE_MIN_WRITE_INTERVAL_MS,
+} = require('./_trackingCache');
 const API_BASE = process.env.SMARTSHEET_API_BASE || "https://api.smartsheet.com/2.0";
-// Build Portugal: mantemos a versão completa do Brasil v36.55 e trocamos somente as fontes Smartsheet para PT.
+// Build Portugal: site separado do Brasil, lendo exclusivamente as fontes PT.
 const OPERATION_REGION = 'PT';
 const SHEET_NAME = process.env.SMARTSHEET_SHEET_NAME_PT || process.env.SMARTSHEET_SHEET_NAME || "Progress Tracking Sheet - Piping Fabrication PT";
-const SHEET_ID_ENV = process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID || "";
+const SHEET_ID_ENV = process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_TRACKING_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID || "";
 const WIP_STEP_SHEET_NAME = process.env.SMARTSHEET_WIP_STEP_SHEET_NAME_PT || process.env.SMARTSHEET_WIP_STEP_SHEET_NAME || "WORK-IN-PROGRESS -PT";
 const WIP_STEP_SHEET_ID_ENV = process.env.SMARTSHEET_WIP_STEP_SHEET_ID_PT || process.env.SMARTSHEET_WORK_IN_PROGRESS_PT_SHEET_ID || process.env.SMARTSHEET_WIP_STEP_SHEET_ID || process.env.SMARTSHEET_WORK_IN_PROGRESS_STEP_SHEET_ID || "";
-const TOKEN = process.env.SMARTSHEET_TOKEN || process.env.SMARTSHEET_ACCESS_TOKEN || process.env.SMARTSHEET_API_TOKEN || process.env.SMARTSHEET_BEARER_TOKEN || process.env.SMARTSHEET_PAT || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN || "5pP36OjBaD1W2HWyxf6aoGxXasPvEl8gbqOmQ";
-const PROJECTS_FAST_CACHE_MS = Number(process.env.PROJECTS_FAST_CACHE_MS || 10 * 60 * 1000); // v32: 10 minutos default
+const TOKEN = process.env.SMARTSHEET_API_KEY_PT || process.env.SMARTSHEET_TOKEN_PT || process.env.SMARTSHEET_ACCESS_TOKEN_PT || process.env.SMARTSHEET_API_TOKEN_PT || process.env.SMARTSHEET_BEARER_TOKEN_PT || process.env.SMARTSHEET_PAT_PT || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN_PT || process.env.SMARTSHEET_API_KEY || process.env.SMARTSHEET_TOKEN || process.env.SMARTSHEET_ACCESS_TOKEN || process.env.SMARTSHEET_API_TOKEN || process.env.SMARTSHEET_BEARER_TOKEN || process.env.SMARTSHEET_PAT || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN || "";
+const PROJECTS_FAST_CACHE_MS = Number(process.env.PROJECTS_FAST_CACHE_MS || 30 * 60 * 1000); // v11 performance: 30 minutos default
 const SESSION_HYDRATION_CACHE_MS = Number(process.env.SESSION_HYDRATION_CACHE_MS || 5 * 60 * 1000);
 
 const cache = global.__STEP_PROGRESS_CACHE__ || {
@@ -30,6 +37,66 @@ if (cache.lastVersionCheck == null) cache.lastVersionCheck = null;
 
 const sessionHydrationCache = global.__SESSION_HYDRATION_CACHE__ || {};
 global.__SESSION_HYDRATION_CACHE__ = sessionHydrationCache;
+
+// v36.84: cache específico para Portal do Cliente.
+// Evita carregar a planilha operacional inteira quando o usuário logado é cliente.
+const CLIENT_PROJECTS_FAST_CACHE_MS = Number(process.env.CLIENT_PROJECTS_FAST_CACHE_MS || 20 * 60 * 1000);
+const CLIENT_SMARTSHEET_ROW_CHUNK_SIZE = Math.max(25, Number(process.env.CLIENT_SMARTSHEET_ROW_CHUNK_SIZE || 300));
+const clientPayloadCache = global.__STEP_CLIENT_PROJECTS_CACHE__ || {};
+global.__STEP_CLIENT_PROJECTS_CACHE__ = clientPayloadCache;
+
+// v37.08: cache persistente no Supabase com modo seguro para plano Free.
+// Mantém uma única linha de cache por ambiente, evita histórico/snapshots e
+// impede que clientes criem várias linhas específicas no banco.
+const PERSISTENT_CACHE_MAX_AGE_MS = Math.max(10 * 60 * 1000, Number(process.env.PERSISTENT_TRACKING_CACHE_MAX_AGE_MS || 12 * 60 * 60 * 1000));
+
+// v37.15: API sempre responde pelo cache persistente primeiro quando possível.
+// Quando a linha do Supabase passa do intervalo configurado, o frontend dispara
+// /api/sync-tracking-cache em background. O endpoint usa lock para impedir que
+// vários usuários atualizem o Smartsheet ao mesmo tempo.
+const TRACKING_CACHE_AUTO_REFRESH_AFTER_MS = Math.max(
+  60 * 1000,
+  Number(process.env.TRACKING_CACHE_AUTO_REFRESH_AFTER_MS || process.env.TRACKING_CACHE_MIN_WRITE_INTERVAL_MS || TRACKING_CACHE_MIN_WRITE_INTERVAL_MS || 15 * 60 * 1000)
+);
+
+// v37.11: não usar timeout curto para montar a primeira base real.
+// O timeout de 8,5s da v37.10 era bom para evitar travamento, mas abortava a leitura
+// completa do Smartsheet antes de popular o Supabase, deixando o painel zerado.
+const SMARTSHEET_FETCH_TIMEOUT_MS = Math.max(2500, Number(process.env.SMARTSHEET_FETCH_TIMEOUT_MS || 12000));
+const SMARTSHEET_FULL_SHEET_TIMEOUT_MS = Math.max(
+  SMARTSHEET_FETCH_TIMEOUT_MS,
+  Number(process.env.SMARTSHEET_FULL_SHEET_TIMEOUT_MS || process.env.SMARTSHEET_FIRST_SYNC_TIMEOUT_MS || 28000)
+);
+const SMARTSHEET_ROWS_FETCH_TIMEOUT_MS = Math.max(
+  SMARTSHEET_FETCH_TIMEOUT_MS,
+  Number(process.env.SMARTSHEET_ROWS_FETCH_TIMEOUT_MS || 20000)
+);
+const WIP_PO_FETCH_TIMEOUT_MS = Math.max(1500, Number(process.env.WIP_PO_FETCH_TIMEOUT_MS || 6500));
+const SMARTSHEET_FETCH_RETRIES = Math.max(1, Number(process.env.SMARTSHEET_FETCH_RETRIES || 1));
+
+// Fallback empacotado antigo NÃO pode alimentar a operação real por padrão.
+// Ele deixava o login rápido, mas podia exibir base de 08/04/2026 com rowIds antigos,
+// quebrando etapas, detalhe da BSP e imagens. Só habilitar manualmente para teste/dev.
+const ALLOW_BUNDLED_FALLBACK = String(process.env.ALLOW_BUNDLED_FALLBACK || process.env.STEP_ALLOW_BUNDLED_FALLBACK || '0') === '1';
+const REQUIRE_FRESH_WHEN_CACHE_EMPTY = String(process.env.REQUIRE_FRESH_WHEN_CACHE_EMPTY || '1') !== '0';
+
+// v37.17: login/leitura normal não consulta mais Smartsheet.
+// A base operacional deve vir do Supabase/cache. Smartsheet só é chamado por:
+// - botão Atualizar, via /api/sync-tracking-cache?force=1&manual=1;
+// - rotina agendada Netlify scheduled-sync-tracking-cache a cada 15 minutos;
+// - opção explícita de emergência PROJECTS_ALLOW_SMARTSHEET_ON_CACHE_MISS=1.
+const PROJECTS_ALLOW_SMARTSHEET_ON_CACHE_MISS = String(process.env.PROJECTS_ALLOW_SMARTSHEET_ON_CACHE_MISS || '0') === '1';
+const PERSISTENT_CACHE_LOGIN_MAX_AGE_MS = Math.max(
+  PERSISTENT_CACHE_MAX_AGE_MS,
+  Number(process.env.PERSISTENT_TRACKING_CACHE_LOGIN_MAX_AGE_MS || 7 * 24 * 60 * 60 * 1000)
+);
+
+const smartsheetColumnsCache = global.__STEP_SMARTSHEET_COLUMNS_CACHE__ || {};
+global.__STEP_SMARTSHEET_COLUMNS_CACHE__ = smartsheetColumnsCache;
+const smartsheetIndexCache = global.__STEP_SMARTSHEET_INDEX_CACHE__ || {};
+global.__STEP_SMARTSHEET_INDEX_CACHE__ = smartsheetIndexCache;
+const wipPoMemoryCache = global.__STEP_WIP_PO_MEMORY_CACHE__ || {};
+global.__STEP_WIP_PO_MEMORY_CACHE__ = wipPoMemoryCache;
 
 const STAGE_ORDER = [
   { key: "Drawing Execution Advance%", label: "AG. Emissão de detalhamento", type: "percent" },
@@ -60,6 +127,83 @@ const STAGE_ORDER = [
   { key: "Project Finished?", label: "Finalizado", type: "boolean" },
 ];
 
+
+// v37.12-safe: aliases do Ponto Focal do cliente.
+// Mantido fora do fluxo pesado para não alterar a performance da v37.11.
+const CLIENT_FOCAL_POINT_ALIASES = [
+  'Client Focal Point*',
+  'Client Focal Point',
+  'Client Focal Point *',
+  'Focal Point',
+  'Focal Point Cliente',
+  'Ponto Focal Cliente',
+  'Ponto Focal',
+  'Client Responsible',
+  'Client Representative',
+  'Client Contact',
+  'Responsible Client',
+  'Contato Cliente',
+  'Contato do Cliente',
+  'Responsável Cliente',
+  'Responsavel Cliente',
+  'Cliente Responsável',
+  'Cliente Responsavel',
+];
+
+const TRACKING_REQUIRED_COLUMN_TITLES = [
+  'Project',
+  'Primary',
+  'PRIMARY',
+  'Item',
+  'Quantity Spools',
+  'Drawing',
+  'Project Type',
+  'Client',
+  'Vessel',
+  'Priority',
+  'PM',
+  'Class',
+  'Line Nº',
+  'Line No',
+  'Line Number',
+  'Size',
+  'OBSERVATIONS',
+  'Kilos',
+  'Peso (KG)',
+  'Peso Soldado (KG)',
+  'Quantity Juntas',
+  'Quant. Juntas',
+  'M2 Painting',
+  'Start Date',
+  'Finish Date',
+  'Fabrication Start Date',
+  'Project Finish Date',
+  'Project Finished?',
+  'Project Status',
+  'PROJECT STATUS',
+  'Overall Project Status',
+  'Status',
+  '% Overall Progress',
+  '% Individual Progress',
+  'Job Process Status',
+  ...STAGE_ORDER.map((stage) => stage.key),
+  ...CLIENT_FOCAL_POINT_ALIASES,
+];
+
+const TRACKING_REQUIRED_COLUMN_INCLUDES = [
+  'Line',
+  'Linha',
+  'Quantity Juntas',
+  'Quant Juntas',
+  'Peso Soldado',
+  'M2 Painting',
+  'Overall Progress',
+  'Individual Progress',
+  'Project Status',
+  'Client Focal Point',
+  'Ponto Focal',
+];
+
 function normalizeColumnTitle(value) {
   return String(value || "")
     .normalize("NFD")
@@ -88,6 +232,14 @@ function textValue(row, key) {
   const cell = getCellValue(row, key);
   const value = cell.display ?? cell.raw;
   return value == null ? "" : String(value).trim();
+}
+
+function textValueAny(row, keys = []) {
+  for (const key of Array.isArray(keys) ? keys : []) {
+    const value = textValue(row, key);
+    if (value && value !== 'N/A' && value !== '—') return value;
+  }
+  return '';
 }
 
 function parseNumberValue(input) {
@@ -140,8 +292,25 @@ function parsePercent(row, key) {
 function isTruthyValue(value) {
   if (value == null) return false;
   if (typeof value === "boolean") return value;
-  const normalized = String(value).trim().toLowerCase();
-  return ["true", "yes", "sim", "y", "1", "concluído", "concluido", "finalizado"].includes(normalized);
+  if (typeof value === "number") return value === 1;
+  const normalized = String(value)
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const compact = normalized.replace(/\s+/g, "");
+  return [
+    "true", "yes", "sim", "y", "1", "checked", "check", "marcado",
+    "verdadeiro", "x", "ok", "concluido", "finalizado", "completed", "finished",
+    "✓", "✔", "☑"
+  ].includes(compact);
+}
+
+function isCellTruthy(row, key) {
+  const cell = getCellValue(row, key);
+  // Para checkbox do Smartsheet, o valor bruto booleano e a fonte mais confiavel.
+  if (isTruthyValue(cell.raw)) return true;
+  return isTruthyValue(cell.display);
 }
 
 function excelSerialToDate(serial) {
@@ -271,7 +440,7 @@ function isAwaitingShipment(row) {
   const coatingPercent = parsePercent(row, "Surface preparation and/or coating") ?? 0;
   const coatingDone = coatingPercent >= 100;
   const packageDelivered = parsePercent(row, "Package and Delivered") ?? 0;
-  const projectFinished = isTruthyValue(textValue(row, "Project Finished?") || getCellValue(row, "Project Finished?").raw);
+  const projectFinished = isCellTruthy(row, "Project Finished?");
   return coatingDone && packageDelivered < 100 && !projectFinished;
 }
 
@@ -296,6 +465,25 @@ function isStageBooleanDone(stageValues, key) {
 
 function pct(stageValues, key) {
   return numberFromStageValue(stageValues, key) ?? 0;
+}
+
+function forceFinishedStageValues(stageValues, finishDate = "") {
+  const target = stageValues && typeof stageValues === "object" ? stageValues : {};
+  for (const stage of STAGE_ORDER) {
+    if (stage.type !== "percent") continue;
+    const current = target[stage.key];
+    if (String(current || "").trim().toUpperCase() === "N/A") continue;
+    // Mantem etapas realmente sem aplicacao vazias, mas corrige toda etapa numerica existente.
+    if (current != null && current !== "") target[stage.key] = 100;
+  }
+  // Estas duas etapas sao obrigatoriamente concluidas quando o projeto foi marcado como finalizado.
+  target["Final Inspection"] = 100;
+  target["Package and Delivered"] = 100;
+  target["Project Finished?"] = "Sim";
+  if (finishDate && !hasStageValue(target, "Project Finish Date")) {
+    target["Project Finish Date"] = finishDate;
+  }
+  return target;
 }
 
 function isSpoolMaterialType(projectType, fallbackText = '') {
@@ -410,21 +598,51 @@ function weightedOverallFromStageValues(stageValues, projectType = '', fallbackT
   return Math.max(0, Math.min(100, stages.reduce((sum, stage) => sum + stage.percent * stage.weight, 0) / totalWeight));
 }
 
+function mergeProjectStageValuesFromSpools(project) {
+  const spools = Array.isArray(project?.spools) ? project.spools : [];
+  if (!project || !spools.length) return project?.stageValues || {};
+
+  const merged = { ...(project.stageValues || {}) };
+  for (const stage of STAGE_ORDER) {
+    if (stage.type !== 'percent') continue;
+    const current = numberFromStageValue(merged, stage.key);
+    if (current != null && current > 0) continue;
+
+    let totalWeight = 0;
+    let weightedSum = 0;
+    for (const spool of spools) {
+      const value = numberFromStageValue(spool?.stageValues, stage.key);
+      if (value == null) continue;
+      const weight = Number(spool?.kilos || 0) > 0 ? Number(spool.kilos) : 1;
+      totalWeight += weight;
+      weightedSum += value * weight;
+    }
+    if (totalWeight > 0) merged[stage.key] = Math.max(0, Math.min(100, weightedSum / totalWeight));
+  }
+  project.stageValues = merged;
+  return merged;
+}
+
 function hasIncompleteProductionEvidence(stageValues, projectType = '', fallbackText = '') {
   return productionStageSnapshotsFromValues(stageValues, projectType, fallbackText).some((stage) => stage.hasEvidence && Number(stage.percent || 0) < 99.9);
 }
 
 function isSpoolFinishedByState(spool) {
-  if (!spool || hasIncompleteProductionEvidence(spool.stageValues, spool.projectType, [spool.iso, spool.drawing, spool.description].filter(Boolean).join(' '))) return false;
-  return Boolean(
+  if (!spool) return false;
+  const explicitFinished = Boolean(
     spool.finished
     || spool.projectFinishedFlag
+    || hasStageValue(spool.stageValues, "Project Finish Date")
     || spool.uiState === "completed"
     || spool.operationalState === "completed"
     || spool.flow?.state === "completed"
     || spool.flow?.status === "Finalizado"
     || Number(spool.overallProgress || 0) >= 99.9
+    || Number(spool.individualProgress || 0) >= 99.9
   );
+  if (explicitFinished) return true;
+  if (hasIncompleteProductionEvidence(spool.stageValues, spool.projectType, [spool.iso, spool.drawing, spool.description].filter(Boolean).join(' '))) return false;
+  return false;
 }
 
 function paintingStatusFromPercent(value) {
@@ -540,7 +758,8 @@ function getFlowSortWeight(flow) {
   const status = normalizeFlowSortText(flow?.status || "");
   const sector = normalizeFlowSortText(flow?.sector || "");
 
-  if (status === "finalizado") return 999;
+  if (status === "finalizado" || status.includes("project finished")) return 999;
+  if (status.includes("package and delivered") || status === "delivered" || status === "enviado") return 130;
   if (status.includes("ag emissao de detalhamento") || status === "emissao de detalhamento") return 10;
   if (status.includes("verificando estoque") || status.includes("aguardando material")) return 20;
   if (status.includes("separacao de material") || status.includes("material separation")) return 30;
@@ -759,7 +978,7 @@ function buildStageValues(row) {
       continue;
     }
     if (stage.type === "boolean") {
-      stageValues[stage.key] = isTruthyValue(textValue(row, stage.key) || getCellValue(row, stage.key).raw) ? "Sim" : "Não";
+      stageValues[stage.key] = isCellTruthy(row, stage.key) ? "Sim" : "Não";
     }
   }
   return stageValues;
@@ -785,7 +1004,7 @@ function deriveProgress(row) {
     }
 
     if (stage.type === "boolean") {
-      const truthy = isTruthyValue(textValue(row, stage.key) || getCellValue(row, stage.key).raw);
+      const truthy = isCellTruthy(row, stage.key);
       milestones.push({ key: stage.key, label: stage.label, value: truthy ? "Sim" : "Não", type: "boolean" });
       if (truthy && !currentStage) {
         currentStage = { key: stage.key, label: stage.label, percent: 100, status: "completed", isAlert: false };
@@ -847,13 +1066,37 @@ function getOperationalFlow(stageValues, fabricationStartDate, coatingPercent, f
 }
 
 function classifyStageSector(stageValue) {
-  const stage = String(stageValue || '').toLowerCase();
+  const stage = String(stageValue || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!stage) return 'Geral';
+
+  if (
+    stage.includes('unitizacao') ||
+    stage.includes('preparado para envio') ||
+    stage.includes('aguardando envio') ||
+    stage.includes('package and delivered') ||
+    stage.includes('awaiting shipment') ||
+    stage.includes('pending shipment') ||
+    stage.includes('shipment') ||
+    stage.includes('logistica') ||
+    stage.includes('logistics') ||
+    stage.includes('expedicao') ||
+    stage === 'enviado' ||
+    stage === 'sent'
+  ) {
+    return 'Logística';
+  }
 
   if (
     stage.includes('paint') ||
+    stage.includes('pintura') ||
     stage.includes('coating') ||
     stage.includes('surface preparation') ||
-    stage.includes('surface preparation and/or coating') ||
     stage.includes('hdg') ||
     stage.includes('fbe')
   ) {
@@ -861,36 +1104,59 @@ function classifyStageSector(stageValue) {
   }
 
   if (
+    stage.includes('qualidade') ||
+    stage.includes('inspecao') ||
     stage.includes('inspection') ||
     stage.includes('nondestructive') ||
     stage.includes('non destructive') ||
     stage.includes('dimensional') ||
+    stage.includes('aguardando end') ||
+    stage.includes('awaiting nde') ||
     stage.includes('hydro test') ||
-    stage.includes('qc') ||
+    stage === 'th' ||
     stage.includes('th finish') ||
+    stage.includes('qc') ||
     stage.includes('final inspection')
   ) {
     return 'Inspeção';
   }
 
+  // Regra operacional STEP: Full Welding/Solda pertence a Solda.
   if (
-    stage.includes('welding') ||
-    stage.includes('solda') ||
-    stage.includes('spool assemble') ||
-    stage.includes('tack weld')
+    stage === 'solda' ||
+    stage.includes('full welding') ||
+    stage.includes('welding execution') ||
+    stage.includes('welding in progress')
   ) {
     return 'Solda';
   }
 
+  // Regra operacional STEP: pré-montagem / tack weld ainda pertence à Calderaria.
   if (
+    stage.includes('calderaria') ||
     stage.includes('boilermaker') ||
-    stage.includes('caldeiraria') ||
+    stage.includes('pre - montagem') ||
+    stage.includes('pre-montagem') ||
+    stage.includes('pre montagem') ||
+    stage.includes('pre-assembly') ||
+    stage.includes('spool assemble') ||
+    stage.includes('tack weld') ||
+    stage.includes('welding preparation') ||
+    stage.includes('corte e limpeza') ||
+    stage.includes('cutting and cleaning') ||
     stage.includes('material release') ||
     stage.includes('material separation') ||
+    stage.includes('separacao de material') ||
     stage.includes('withdrew material') ||
+    stage.includes('verificando estoque') ||
+    stage.includes('checking stock') ||
     stage.includes('drawing execution') ||
     stage.includes('procurement') ||
-    stage.includes('fabrication')
+    stage.includes('fabrication') ||
+    stage.includes('suprimento') ||
+    stage.includes('supply') ||
+    stage.includes('engenharia') ||
+    stage.includes('engineering')
   ) {
     return 'Calderaria';
   }
@@ -898,22 +1164,61 @@ function classifyStageSector(stageValue) {
   return 'Geral';
 }
 
-function classifyAlertSector(project) {
-  const stage = String(project?.currentStage || "").toLowerCase();
-  const uiState = String(project?.uiState || project?.operationalState || "").toLowerCase();
+function normalizeAlertSectorName(value, stageValue = '') {
+  const direct = classifyStageSector(value);
+  if (direct !== 'Geral') return direct;
 
-  if (
-    stage.includes("final inspection") ||
-    stage.includes("unitização") ||
-    stage.includes("unitizacao") ||
-    stage.includes("package and delivered") ||
-    stage.includes("envio") ||
-    uiState === "awaiting_shipment"
-  ) {
-    return "Logística";
+  const byStage = classifyStageSector(stageValue);
+  if (byStage !== 'Geral') return byStage;
+
+  const normalized = String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+  if (['producao', 'production'].includes(normalized)) return 'Calderaria';
+  if (['qualidade', 'quality', 'inspecao', 'inspection'].includes(normalized)) return 'Inspeção';
+  if (['suprimento', 'supply', 'engenharia', 'engineering'].includes(normalized)) return 'Calderaria';
+  if (['pintura', 'painting'].includes(normalized)) return 'Pintura';
+  if (['logistica', 'logistics', 'envio', 'shipping', 'enviado', 'sent'].includes(normalized)) return 'Logística';
+  if (normalized === 'solda' || normalized === 'welding') return 'Solda';
+  if (normalized === 'calderaria' || normalized === 'boilermaker') return 'Calderaria';
+  return 'Geral';
+}
+
+function classifyAlertSector(project) {
+  // v37.79: ON HOLD sempre prevalece sobre a etapa operacional.
+  // Quando o sinalizador for removido no Smartsheet, a classificação volta
+  // automaticamente para Solda/Calderaria/Qualidade/Pintura/Logística.
+  if (isProjectOnHold(project)) return 'On Hold';
+
+  const uiState = String(project?.uiState || project?.operationalState || '').toLowerCase();
+  const stageCandidates = [
+    project?.currentStatus,
+    project?.currentStage,
+    project?.flow?.status,
+    project?.jobProcessStatus,
+    project?.statusSummary,
+  ].filter(Boolean);
+
+  if (uiState === 'awaiting_shipment') return 'Logística';
+
+  // A etapa real tem prioridade sobre o grupo amplo "Produção". Assim Solda e
+  // Calderaria não desaparecem nos filtros quando operationalSector = Produção.
+  for (const stage of stageCandidates) {
+    const sector = classifyStageSector(stage);
+    if (sector !== 'Geral') return sector;
   }
 
-  if (project?.operationalSector) return project.operationalSector;
+  const stageHint = stageCandidates.join(' | ');
+  const operational = normalizeAlertSectorName(
+    project?.operationalSector || project?.currentSector || project?.sectorSummary,
+    stageHint,
+  );
+  if (operational !== 'Geral') return operational;
+
   const stageValues = project?.stageValues || {};
   const flow = getOperationalFlow(
     stageValues,
@@ -921,16 +1226,29 @@ function classifyAlertSector(project) {
     project?.coatingPercent,
     project?.finished,
     project?.projectStatus,
+    project?.projectType,
+    [project?.projectDisplay, project?.summaryDrawing].filter(Boolean).join(' '),
   );
-  return flow.sector || 'Geral';
+  return normalizeAlertSectorName(flow?.sector, flow?.status) || 'Geral';
 }
 
 function buildAlertObservation(project, sector, diffDays) {
   const stageLabel = project?.currentStage || project?.jobProcessStatus || 'Etapa não identificada';
   const coatingPercent = Number(project?.coatingPercent || 0);
-  const baseDaysText = diffDays < 0
-    ? `O término planejado já venceu há ${Math.abs(diffDays)} dia(s).`
-    : `Faltam ${diffDays} dia(s) para o término planejado.`;
+  const hasDeadline = diffDays !== null && diffDays !== undefined && diffDays !== '' && Number.isFinite(Number(diffDays));
+  const normalizedDiffDays = hasDeadline ? Number(diffDays) : null;
+  const baseDaysText = !hasDeadline
+    ? 'O término planejado não está informado.'
+    : normalizedDiffDays < 0
+      ? `O término planejado já venceu há ${Math.abs(normalizedDiffDays)} dia(s).`
+      : `Faltam ${normalizedDiffDays} dia(s) para o término planejado.`;
+
+  if (sector === 'On Hold') {
+    return {
+      title: hasDeadline && normalizedDiffDays < 0 ? 'On Hold em atraso' : 'Projeto em On Hold',
+      message: `${baseDaysText} A BSP está sinalizada como On Hold e foi retirada temporariamente da demanda operacional.`,
+    };
+  }
 
   if (coatingPercent >= 100) {
     const coatingFinishDate = project?.stageValues?.["Coating Finish Date"] || project?.coatingFinishDate || "";
@@ -986,7 +1304,51 @@ function isSummaryRow(row) {
   const drawing = textValue(row, "Drawing");
   const parts = parseProjectParts(projectText);
 
-  return Boolean(parts.prefix && parts.number && (quantitySpools != null || drawing === "ISO" || textValue(row, "Project Type")));
+  if (!parts.number) return false;
+
+  const hasClassicSummaryEvidence = quantitySpools != null || drawing === "ISO" || textValue(row, "Project Type");
+  const hasSummaryIdentityEvidence = Boolean(
+    textValue(row, "Client")
+    || textValue(row, "Vessel")
+    || textValue(row, "PM")
+    || textValue(row, "Priority")
+    || textValue(row, "Class")
+    || textValue(row, "Start Date")
+    || textValue(row, "Finish Date")
+    || textValue(row, "Project Status")
+    || textValue(row, "PROJECT STATUS")
+    || textValue(row, "Overall Project Status")
+    || textValue(row, "Status")
+    || textValue(row, "% Overall Progress")
+    || textValue(row, "% Individual Progress")
+    || hasStageProgressEvidence(buildStageValues(row))
+  );
+  const drawingLooksLikeSpool = Boolean(drawing && drawing !== "ISO");
+
+  // v36.71 - Portugal/cliente: algumas BSPs novas entram no Smartsheet sem o prefixo "BSP"
+  // no campo Project (ex.: "26-7001"). Antes o painel só aceitava linha-mãe
+  // quando havia prefixo, então a BSP ficava invisível. Agora uma linha sem prefixo
+  // também pode abrir uma nova BSP quando houver evidência operacional na linha.
+  const hasClientOrVessel = Boolean(textValue(row, "Client") || textValue(row, "Vessel"));
+  const hasOperationalEvidence = Boolean(
+    hasClassicSummaryEvidence
+    || hasSummaryIdentityEvidence
+    || textValue(row, "Item")
+    || parseNumber(row, "Kilos") != null
+    || parseNumber(row, "Peso (KG)") != null
+    || parseNumber(row, "Peso Soldado (KG)") != null
+    || parseNumber(row, "Quantity Juntas") != null
+    || parseNumber(row, "Quant. Juntas") != null
+    || textValue(row, "Line Nº")
+    || textValue(row, "Line No")
+    || textValue(row, "Line Number")
+    || textValue(row, "Size")
+    || textValue(row, "OBSERVATIONS")
+  );
+
+  if (parts.prefix && hasOperationalEvidence && !drawingLooksLikeSpool) return true;
+
+  return Boolean(hasClientOrVessel && hasOperationalEvidence && !drawingLooksLikeSpool);
 }
 
 function isChildRow(row) {
@@ -1007,13 +1369,21 @@ function buildSpoolRow(row, parentSummary) {
   const rowIndividualProgress = parsePercent(row, "% Individual Progress");
   const overallProgress = rowOverallProgress ?? rowIndividualProgress ?? 0;
   const individualProgress = rowIndividualProgress ?? overallProgress;
-  const projectFinishedFlag = isTruthyValue(getCellValue(row, "Project Finished?").raw);
+  const projectFinishedFlag = isCellTruthy(row, "Project Finished?");
   const fabricationStartDate = textValue(row, "Fabrication Start Date");
   const stageValues = buildStageValues(row);
   const projectType = textValue(row, "Project Type") || textValue(parentSummary, "Project Type");
   const typeFallbackText = [drawingText, parsedDrawing.iso, parsedDrawing.description].filter(Boolean).join(' ');
   const hasIncompleteStageEvidence = hasIncompleteProductionEvidence(stageValues, projectType, typeFallbackText);
-  const finished = !hasIncompleteStageEvidence && (projectFinishedFlag || overallProgress >= 100 || hasStageValue(stageValues, "Project Finish Date"));
+  // v37.76: marcadores definitivos do Tracking prevalecem sobre percentuais intermediarios antigos.
+  // Se Project Finished? estiver marcado, houver Project Finish Date ou o progresso estiver em 100%,
+  // a ISO deve ser finalizada mesmo que alguma etapa anterior ainda esteja desatualizada no cache.
+  const finished = Boolean(
+    projectFinishedFlag
+    || hasStageValue(stageValues, "Project Finish Date")
+    || overallProgress >= 99.9
+    || individualProgress >= 99.9
+  );
   const flow = getOperationalFlow(stageValues, fabricationStartDate, parsePercent(row, "Surface preparation and/or coating") ?? 0, finished, textValue(row, "PROJECT STATUS"), projectType, typeFallbackText);
   const awaitingShipment = flow.state === "awaiting_shipment";
   const uiState = uiStateFromFlow(flow, finished);
@@ -1202,10 +1572,21 @@ function applyProjectSpoolRollup(project) {
   // v32.2: Cálculo de progresso baseado estritamente nas ISOs (spools)
   // Se houver spools, o progresso do projeto pai deve ser a média ponderada ou simples dos spools.
   if (spools.length > 0) {
-    const totalKilos = spools.reduce((sum, s) => sum + (s.kilos || 0), 0) || 1;
-    const weightedOverall = spools.reduce((sum, s) => sum + ((s.overallProgress || 0) * (s.kilos || 0)), 0) / totalKilos;
-    const weightedIndividual = spools.reduce((sum, s) => sum + ((s.individualProgress || 0) * (s.kilos || 0)), 0) / totalKilos;
-    const weightedCoating = spools.reduce((sum, s) => sum + ((s.coatingPercent || 0) * (s.kilos || 0)), 0) / totalKilos;
+    // Calcula o progresso ponderado das ISOs (spools).
+    // Caso um spool não tenha o campo "kilos" definido ou seja zero, assume peso 1 para não ignorá-lo.
+    const totalWeight = spools.reduce((sum, s) => sum + (s.kilos || 1), 0);
+    const weightedOverall = spools.reduce((sum, s) => {
+      const weight = s.kilos || 1;
+      return sum + ((s.overallProgress || 0) * weight);
+    }, 0) / (totalWeight || 1);
+    const weightedIndividual = spools.reduce((sum, s) => {
+      const weight = s.kilos || 1;
+      return sum + ((s.individualProgress || 0) * weight);
+    }, 0) / (totalWeight || 1);
+    const weightedCoating = spools.reduce((sum, s) => {
+      const weight = s.kilos || 1;
+      return sum + ((s.coatingPercent || 0) * weight);
+    }, 0) / (totalWeight || 1);
     const totalWeldedWeight = spools.reduce((sum, s) => sum + (s.weldedWeightKg || 0), 0);
 
     project.overallProgress = weightedOverall;
@@ -1215,11 +1596,16 @@ function applyProjectSpoolRollup(project) {
 
     const spoolsWithStageEvidence = spools.filter((s) => hasStageProgressEvidence(s.stageValues));
     if (spoolsWithStageEvidence.length) {
-      const stageTotalKilos = spoolsWithStageEvidence.reduce((sum, s) => sum + (s.kilos || 0), 0) || spoolsWithStageEvidence.length || 1;
+      // Para cálculo por estágios, utilize peso 1 para spools sem kilos definidos.
+      const stageTotalWeight = spoolsWithStageEvidence.reduce((sum, s) => sum + (s.kilos || 1), 0);
       project.overallProgress = spoolsWithStageEvidence.reduce((sum, s) => {
-        const weight = s.kilos || (stageTotalKilos / spoolsWithStageEvidence.length);
-        return sum + weightedOverallFromStageValues(s.stageValues, s.projectType || project.projectType, [s.iso, s.drawing, s.description].filter(Boolean).join(' ')) * weight;
-      }, 0) / stageTotalKilos;
+        const weight = s.kilos || 1;
+        return sum + weightedOverallFromStageValues(
+          s.stageValues,
+          s.projectType || project.projectType,
+          [s.iso, s.drawing, s.description].filter(Boolean).join(' ')
+        ) * weight;
+      }, 0) / (stageTotalWeight || 1);
     }
     
     // Atualiza estatísticas de spools baseadas no estado real de cada um
@@ -1232,11 +1618,15 @@ function applyProjectSpoolRollup(project) {
     }, { total: 0, completed: 0, inProgress: 0, notStarted: 0 });
   }
 
+  mergeProjectStageValuesFromSpools(project);
+
   if (hasStageProgressEvidence(project.stageValues)) {
     project.overallProgress = weightedOverallFromStageValues(project.stageValues, project.projectType, project.summaryDrawing);
   }
 
-  const finalFinished = summary.allFinished || (explicitFinished && !hasIncompleteStageEvidence && (spools.length === 0 || allSpoolsFinishedByEvidence));
+  // v37.76: Project Finished?/Project Finish Date na linha raiz devem encerrar a BSP.
+  // Nao bloquear a finalizacao por percentuais intermediarios antigos ou por rollup ainda nao reconciliado.
+  const finalFinished = Boolean(summary.allFinished || explicitFinished || allSpoolsFinishedByEvidence);
   const finalFlow = finalFinished ? makeFlow("Finalizado", "Enviado", 100, "completed", "completed") : summary.flow;
   
   project.demandSummary = summary;
@@ -1255,13 +1645,28 @@ function applyProjectSpoolRollup(project) {
   project.finished = finalFinished;
   project.uiState = uiStateFromFlow(finalFlow, finalFinished);
 
+  // v37.75: se a linha raiz/BSP estiver sinalizada como ON HOLD no Smartsheet,
+  // a etapa atual enviada para o painel deve ser On Hold. O status real do Tracking
+  // continua preservado nos campos de status para detalhamento.
+  if (isProjectOnHold(project)) {
+    project.currentStageGroup = "On Hold";
+    project.sectorSummary = "On Hold";
+    project.operationalSector = "On Hold";
+  }
+
   // Correção v32.1/v32.2: Se o projeto está finalizado, forçamos todos os indicadores a 100%
   // Isso garante que mesmo que a planilha tenha dados parciais nas ISOs, o status "Finalizado" prevaleça.
   if (finalFinished) {
+    const projectFinishDate = project.stageValues?.["Project Finish Date"] || project.shipmentDate || "";
+    project.stageValues = forceFinishedStageValues(project.stageValues, projectFinishDate);
+    project.projectFinishedFlag = true;
     project.overallProgress = 100;
     project.individualProgress = 100;
     project.currentStagePercent = 100;
     project.coatingPercent = 100;
+    project.currentStatus = "Finalizado";
+    project.currentSector = "Enviado";
+    project.operationalState = "completed";
     
     if (project.kilos != null) {
       project.weldedWeightKg = project.kilos;
@@ -1275,8 +1680,15 @@ function applyProjectSpoolRollup(project) {
 
     if (Array.isArray(project.spools)) {
       project.spools.forEach(spool => {
+        const spoolFinishDate = spool.stageValues?.["Project Finish Date"] || projectFinishDate;
+        spool.stageValues = forceFinishedStageValues(spool.stageValues, spoolFinishDate);
         spool.finished = true;
+        spool.projectFinishedFlag = true;
         spool.uiState = 'completed';
+        spool.operationalState = 'completed';
+        spool.operationalSector = 'Enviado';
+        spool.currentStatus = 'Finalizado';
+        spool.currentSector = 'Enviado';
         spool.individualProgress = 100;
         spool.overallProgress = 100;
         spool.stagePercent = 100;
@@ -1314,16 +1726,23 @@ function buildProject(summaryRow, childRows) {
   const progress = deriveProgress(summaryRow);
   const overallProgress = parsePercent(summaryRow, "% Overall Progress") ?? 0;
   const individualProgress = parsePercent(summaryRow, "% Individual Progress") ?? overallProgress;
-  const projectFinishedFlag = isTruthyValue(getCellValue(summaryRow, "Project Finished?").raw);
+  const projectFinishedFlag = isCellTruthy(summaryRow, "Project Finished?");
   const projectStatus = textValue(summaryRow, "Project Status") || textValue(summaryRow, "PROJECT STATUS") || textValue(summaryRow, "Overall Project Status") || textValue(summaryRow, "Status");
   const observations = textValue(summaryRow, "OBSERVATIONS");
   const coatingPercent = parsePercent(summaryRow, "Surface preparation and/or coating") ?? 0;
   const fabricationStartDate = textValue(summaryRow, "Fabrication Start Date");
   const projectType = textValue(summaryRow, "Project Type");
+  const clientFocalPointFromTracking = textValueAny(summaryRow, CLIENT_FOCAL_POINT_ALIASES);
   const summaryDrawing = textValue(summaryRow, "Drawing");
   const stageValues = buildStageValues(summaryRow);
   const summaryHasIncompleteStageEvidence = hasIncompleteProductionEvidence(stageValues, projectType, summaryDrawing);
-  const summaryFinished = !summaryHasIncompleteStageEvidence && (projectFinishedFlag || overallProgress >= 100 || hasStageValue(stageValues, "Project Finish Date"));
+  // v37.76: a finalizacao explicita da linha raiz e autoritativa.
+  const summaryFinished = Boolean(
+    projectFinishedFlag
+    || hasStageValue(stageValues, "Project Finish Date")
+    || overallProgress >= 99.9
+    || individualProgress >= 99.9
+  );
   const flow = getOperationalFlow(stageValues, fabricationStartDate, coatingPercent, summaryFinished, projectStatus, projectType, summaryDrawing);
   const awaitingShipment = flow.state === "awaiting_shipment";
   const uiState = uiStateFromFlow(flow, summaryFinished) || projectUiState(projectStatus, overallProgress, summaryFinished, fabricationStartDate, awaitingShipment);
@@ -1368,6 +1787,9 @@ function buildProject(summaryRow, childRows) {
     customerPoList: [],
     customerPoDisplay: 'Aguardando PO',
     customerPoStatus: 'waiting',
+    clientFocalPoint: clientFocalPointFromTracking,
+    clientFocalPointList: clientFocalPointFromTracking ? collectWipNameValues(clientFocalPointFromTracking) : [],
+    clientFocalPointDisplay: clientFocalPointFromTracking,
     clientDisplayCode: `${parts.display || projectText || 'BSP'} - Aguardando PO`,
     priority: textValue(summaryRow, "Priority"),
     lineNumber: textValue(summaryRow, "Line Nº") || textValue(summaryRow, "Line No") || textValue(summaryRow, "Line Number"),
@@ -1461,6 +1883,26 @@ function buildProjects(rows) {
   let currentSummary = null;
 
   for (const row of rows) {
+    const currentProjectNumber = currentSummary ? parseProjectParts(textValue(currentSummary, "Project")).number : '';
+    const rowProjectNumber = parseProjectParts(textValue(row, "Project")).number;
+
+    // v36.71 - quando a planilha está em formato plano, as linhas seguintes da mesma BSP
+    // podem não vir como children do Smartsheet e também podem não ter coluna Drawing.
+    // Se a linha atual tem o mesmo número da última BSP aberta, ela deve entrar como item/tag
+    // da BSP atual, não abrir uma BSP duplicada nem ser ignorada.
+    if (currentSummary && rowProjectNumber && currentProjectNumber && rowProjectNumber === currentProjectNumber && !row.parentId) {
+      const lastProject = projects[projects.length - 1];
+      if (lastProject) {
+        const spool = buildSpoolRow(row, currentSummary);
+        lastProject.spools.push(spool);
+        lastProject.spoolStats.total += 1;
+        if (spool.uiState === "completed") lastProject.spoolStats.completed += 1;
+        else if (spool.uiState === "in_progress") lastProject.spoolStats.inProgress += 1;
+        else lastProject.spoolStats.notStarted += 1;
+        continue;
+      }
+    }
+
     if (isSummaryRow(row)) {
       const projectChildren = getLeafChildRows(row.id);
       currentSummary = row;
@@ -1471,9 +1913,7 @@ function buildProjects(rows) {
     if (!currentSummary) continue;
     if (!isChildRow(row)) continue;
 
-    const currentProjectNumber = parseProjectParts(textValue(currentSummary, "Project")).number;
-    const childProjectNumber = parseProjectParts(textValue(row, "Project")).number;
-    if (!childProjectNumber || childProjectNumber !== currentProjectNumber) continue;
+    if (!rowProjectNumber || rowProjectNumber !== currentProjectNumber) continue;
 
     const lastProject = projects[projects.length - 1];
     if (!lastProject) continue;
@@ -1508,6 +1948,33 @@ function buildProjects(rows) {
 }
 
 function getProjectAlert(project, today = getCurrentBrazilDateObject()) {
+  // v37.80: On Hold é um alerta operacional próprio, não apenas um alerta de prazo.
+  // Por isso deve aparecer imediatamente, mesmo sem início de fabricação, mesmo fora
+  // da janela de 5 dias e mesmo quando existirem datas/progressos antigos conflitantes.
+  // Ao retirar o On Hold no Smartsheet, o projeto volta a seguir a regra normal do setor.
+  const onHold = isProjectOnHold(project);
+  if (onHold) {
+    const plannedFinish = parseDateObject(project?.plannedFinishDate);
+    const diffDays = plannedFinish ? Math.floor((plannedFinish - today) / 86400000) : null;
+    const coatingPercent = Number(project?.coatingPercent || 0);
+    const observation = buildAlertObservation(project, 'On Hold', diffDays);
+    return {
+      projectDisplay: project?.projectDisplay,
+      projectNumber: project?.projectNumber,
+      projectRowId: project?.rowId,
+      client: project?.client,
+      sector: 'On Hold',
+      plannedFinishDate: project?.plannedFinishDate || '',
+      daysRemaining: diffDays,
+      type: diffDays !== null && diffDays !== undefined && diffDays !== '' && Number.isFinite(Number(diffDays)) && Number(diffDays) < 0 ? 'on_hold_overdue' : 'on_hold',
+      title: observation.title,
+      message: observation.message,
+      coatingPercent,
+      currentStage: 'On Hold',
+      onHold: true,
+    };
+  }
+
   if (!project.fabricationStartDate) return null;
   if (hasProjectFinishedMarker(project)) return null;
   if (project?.uiState === "completed" || project?.operationalState === "completed") return null;
@@ -1533,7 +2000,8 @@ function getProjectAlert(project, today = getCurrentBrazilDateObject()) {
       title: observation.title,
       message: observation.message,
       coatingPercent,
-      currentStage: project.currentStage,
+      currentStage: sector === 'On Hold' ? 'On Hold' : project.currentStage,
+      onHold: sector === 'On Hold',
     };
   }
 
@@ -1550,7 +2018,8 @@ function getProjectAlert(project, today = getCurrentBrazilDateObject()) {
       title: observation.title,
       message: observation.message,
       coatingPercent,
-      currentStage: project.currentStage,
+      currentStage: sector === 'On Hold' ? 'On Hold' : project.currentStage,
+      onHold: sector === 'On Hold',
     };
   }
 
@@ -1562,15 +2031,34 @@ function buildAlerts(projects) {
     .map((project) => getProjectAlert(project))
     .filter(Boolean)
     .sort((a, b) => {
-      if (a.daysRemaining !== b.daysRemaining) return a.daysRemaining - b.daysRemaining;
+      const leftDays = a?.daysRemaining !== null && a?.daysRemaining !== undefined && a?.daysRemaining !== '' && Number.isFinite(Number(a.daysRemaining)) ? Number(a.daysRemaining) : Number.POSITIVE_INFINITY;
+      const rightDays = b?.daysRemaining !== null && b?.daysRemaining !== undefined && b?.daysRemaining !== '' && Number.isFinite(Number(b.daysRemaining)) ? Number(b.daysRemaining) : Number.POSITIVE_INFINITY;
+      if (leftDays !== rightDays) return leftDays - rightDays;
       return String(a.projectDisplay || "").localeCompare(String(b.projectDisplay || ""), "pt-BR");
     });
 
   const signature = alerts
-    .map((alert) => [alert.projectDisplay, alert.type, alert.plannedFinishDate, alert.daysRemaining].join("|"))
+    // Inclui setor/etapa para invalidar o estado quando a BSP entra ou sai de On Hold.
+    .map((alert) => [alert.projectDisplay, alert.type, alert.plannedFinishDate, alert.daysRemaining, alert.sector, alert.currentStage].join("|"))
     .join("||");
 
   return { alerts, signature };
+}
+
+
+function reconcilePayloadAlerts(payload, reason = 'runtime-alert-reconcile') {
+  if (!payload || !Array.isArray(payload.projects)) return payload;
+  const alertData = buildAlerts(payload.projects);
+  return {
+    ...payload,
+    alerts: alertData.alerts,
+    meta: {
+      ...(payload.meta || {}),
+      alertSignature: alertData.signature,
+      alertsReconciledAt: new Date().toISOString(),
+      alertsReconcileReason: reason,
+    },
+  };
 }
 
 function normalizeStatusText(value) {
@@ -1787,19 +2275,73 @@ function isProjectExcludedFromTotal(project) {
   return isProjectOnHold(project) || isProjectPending(project) || hasProjectFinishedMarker(project);
 }
 
-function isProjectStartedForStats(project) {
-  if (!project || isProjectExcludedFromTotal(project)) return { started: false, tags: 0 };
+function getProjectRootJobProcessStatus(project) {
+  const candidates = [
+    project?.jobProcessStatus,
+    project?.stageValues?.["Job Process Status"],
+    project?.stageValues?.["JOB PROCESS STATUS"],
+    project?.currentStage,
+  ];
+  const value = candidates.find((item) => item != null && String(item).trim() !== "");
+  return value == null ? "" : String(value).trim();
+}
+
+function isProjectRootJobStatusDelivered(project) {
+  const normalized = normalizeStatusText(getProjectRootJobProcessStatus(project));
+  return normalized.includes("PACKAGE AND DELIVERED") || normalized.includes("PROJECT FINISHED");
+}
+
+function isProjectRootJobStatusNotStarted(project) {
+  const normalized = normalizeStatusText(getProjectRootJobProcessStatus(project));
+  return normalized.includes("FABRICATION NOT STARTED");
+}
+
+function getProjectCardBucketFromFlow(flow) {
+  const sector = normalizeFlowSortText(flow?.sector || "");
+  const weight = getFlowSortWeight(flow || {});
+
+  if (["logistica", "envio", "enviado"].includes(sector) || (weight >= 120 && weight < 500)) return "awaiting";
+  if (["pintura", "painting", "coating"].includes(sector) || (weight >= 110 && weight < 500)) return "painting";
+  if (["qualidade", "inspecao", "inspection", "quality"].includes(sector) || (weight >= 80 && weight < 500)) return "inspection";
+  if (["producao", "solda", "calderaria", "production", "welding", "fabrication"].includes(sector) || (weight >= 40 && weight < 500)) return "production";
+  return "not_started";
+}
+
+function getProjectDelayedStageStats(project) {
   const openItems = getOpenFlowItemsForStats(project);
-  const startedItems = openItems.filter((item) => {
-    const sector = String(item.flow?.sector || "").trim();
-    return ["Produção", "Qualidade", "Pintura", "Logística", "Enviado"].includes(sector);
-  });
-  if (startedItems.length) return { started: true, tags: startedItems.length };
-  const statusText = normalizeStatusText([project.currentStage, project.currentStatus, project.statusSummary, project.operationalSector, project.currentSector, project.flow?.status, project.flow?.sector].filter(Boolean).join(" "));
-  const textualStarted = ["CORTE", "FABRICATION", "PRE", "SOLD", "WELD", "INSPEC", "TH", "PINT", "PAINT", "COATING", "UNITIZ", "ENVIO", "LOGIST"].some((term) => statusText.includes(term));
-  if (textualStarted) return { started: true, tags: Number(project.quantitySpools || 1) };
-  const progress = Number(project.overallProgress || project.currentStagePercent || 0);
-  return progress > 0 ? { started: true, tags: Number(project.quantitySpools || 1) } : { started: false, tags: 0 };
+  const fallbackFlow = project?.flow || { status: getProjectRootJobProcessStatus(project), sector: project?.operationalSector || project?.currentStageGroup || project?.currentSector };
+  const source = openItems.length ? openItems : [{ flow: fallbackFlow, spool: null }];
+  const sorted = [...source].sort((a, b) => getFlowSortWeight(a.flow || {}) - getFlowSortWeight(b.flow || {}));
+  const delayedBucket = getProjectCardBucketFromFlow(sorted[0]?.flow || fallbackFlow);
+  const matchingItems = source.filter((item) => getProjectCardBucketFromFlow(item.flow || fallbackFlow) === delayedBucket);
+  const itemCount = source.some((item) => item.spool)
+    ? matchingItems.length
+    : Number(project?.quantitySpools || matchingItems.length || 1);
+  return {
+    bucket: delayedBucket,
+    tagCount: Math.max(0, Number(itemCount || 0)),
+    flow: sorted[0]?.flow || fallbackFlow,
+  };
+}
+
+function getProjectExclusiveCardBucket(project) {
+  // v37.70: classificação exclusiva pela etapa mais atrasada dos ISOs abertos.
+  // A Etapa Atual continua mostrando todas as etapas, mas os cards contam a menor etapa.
+  // Ex.: se a BSP tem ISO em Pintura e ISO em Solda, o card da BSP entra em Produção/Solda.
+  if (!project) return "unknown";
+  if (isProjectOnHold(project)) return "hold";
+  if (isProjectPending(project)) return "pending";
+  if (hasProjectFinishedMarker(project)) return "finished";
+  const delayed = getProjectDelayedStageStats(project);
+  if (delayed.bucket === "not_started") return "not_started";
+  return "started";
+}
+
+function isProjectStartedForStats(project) {
+  if (!project) return { started: false, tags: 0 };
+  const bucket = getProjectExclusiveCardBucket(project);
+  if (bucket !== "started") return { started: false, tags: 0 };
+  return { started: true, tags: Number(project.quantitySpools || project.spools?.length || 1) };
 }
 
 function isAwaitingShipmentStatsFlow(flow) {
@@ -1861,9 +2403,12 @@ function isProjectOnHold(project) {
 }
 
 function buildStats(projects) {
-  const activeProjects = (Array.isArray(projects) ? projects : []).filter((project) => !isProjectExcludedFromTotal(project));
+  const sourceProjects = Array.isArray(projects) ? projects : [];
+  const activeProjects = sourceProjects.filter((project) => !isProjectExcludedFromTotal(project));
   const stats = {
-    totalProjects: activeProjects.length,
+    // v37.68: Total de Projetos deve contar a quantidade real de linhas raiz/projetos
+    // retornados do Smartsheet. On Hold, Não iniciado e Enviado são recortes, não exclusões.
+    totalProjects: sourceProjects.length,
     totalSpools: 0,
     totalWeightKg: 0,
     totalWeldedWeightKg: 0,
@@ -1900,68 +2445,91 @@ function buildStats(projects) {
       ? spools.filter((spool) => spool.flow?.state !== "completed" && spool.flow?.status !== "Finalizado").reduce((total, spool) => total + Number(spool.m2Painting || 0), 0)
       : 0;
     stats.totalPaintingM2 += isFinishedProject ? 0 : (openPaintingM2 > 0 ? openPaintingM2 : Number(project.m2Painting || 0));
-    const isOnHold = isProjectOnHold(project);
-    const isPending = isProjectPending(project);
+    const cardBucket = getProjectExclusiveCardBucket(project);
 
-    if (isOnHold) {
+    if (cardBucket === "hold") {
       stats.notStartedHold += 1;
       stats.notStartedHoldTags += tags;
       continue;
     }
 
-    if (isPending) {
+    if (cardBucket === "pending") {
       continue;
     }
 
-    if (isFinishedProject) {
+    if (cardBucket === "finished") {
       stats.completed += 1;
       stats.completedTags += tags;
       continue;
     }
 
+    if (cardBucket === "not_started") {
+      stats.notStarted += 1;
+      stats.notStartedTags += tags;
+      continue;
+    }
+
+    stats.startedProjects += 1;
+    stats.startedTags += tags;
     progressAccumulator += project.overallProgress || 0;
 
-    const openItems = getOpenFlowItemsForStats(project);
-    const startedSnapshot = isProjectStartedForStats(project);
-    if (startedSnapshot.started) {
-      stats.startedProjects += 1;
-      stats.startedTags += Number(startedSnapshot.tags || tags || 0);
-    }
-    const countSector = (sector) => openItems.filter((item) => item.flow?.sector === sector).length;
-    const producaoTags = countSector("Produção");
-    const qualidadeTags = countSector("Qualidade");
-    const pinturaTags = countSector("Pintura");
-    const logisticaTags = getAwaitingShipmentTagsForStats(project);
-    const preStartTags = openItems.filter((item) => ["Engenharia", "Suprimento"].includes(item.flow?.sector)).length;
-
-    if (producaoTags) { stats.inProgress += 1; stats.inProgressTags += producaoTags; }
-    if (qualidadeTags) { stats.inspectionProjects += 1; stats.inspectionTags += qualidadeTags; }
-    if (pinturaTags) { stats.paintingProjects += 1; stats.paintingTags += pinturaTags; }
-    if (logisticaTags) { stats.awaitingShipment += 1; stats.awaitingShipmentTags += logisticaTags; }
-    if (preStartTags || (!openItems.length && !project.finished)) {
-      stats.notStarted += 1;
-      stats.notStartedTags += preStartTags || tags;
-    }
+    const delayedStage = getProjectDelayedStageStats(project);
+    const delayedTags = delayedStage.tagCount || tags || 1;
+    if (delayedStage.bucket === "production") { stats.inProgress += 1; stats.inProgressTags += delayedTags; }
+    if (delayedStage.bucket === "inspection") { stats.inspectionProjects += 1; stats.inspectionTags += delayedTags; }
+    if (delayedStage.bucket === "painting") { stats.paintingProjects += 1; stats.paintingTags += delayedTags; }
+    if (delayedStage.bucket === "awaiting") { stats.awaitingShipment += 1; stats.awaitingShipmentTags += delayedTags; }
   }
 
   stats.averageOverallProgress = activeProjects.length ? progressAccumulator / activeProjects.length : 0;
   return stats;
 }
 
-async function apiFetch(path) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      "Content-Type": "application/json",
-    },
-  });
+function isTransientSmartsheetError(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  return error?.name === 'AbortError'
+    || message.includes('fetch failed')
+    || message.includes('terminated')
+    || message.includes('timeout')
+    || message.includes('econnreset')
+    || message.includes('socket')
+    || message.includes('network');
+}
 
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(`Smartsheet ${response.status}: ${message}`);
+async function apiFetch(path, options = {}) {
+  const timeoutMs = Math.max(2500, Number(options.timeoutMs || SMARTSHEET_FETCH_TIMEOUT_MS));
+  const attempts = Math.max(1, Number(options.retries || SMARTSHEET_FETCH_RETRIES));
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${API_BASE}${path}`, {
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      });
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        const message = await response.text().catch(() => '');
+        throw new Error(`Smartsheet ${response.status}: ${message}`);
+      }
+
+      return response.json();
+    } catch (error) {
+      clearTimeout(timer);
+      lastError = error;
+      const transient = isTransientSmartsheetError(error);
+      if (!transient || attempt >= attempts) break;
+      await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+    }
   }
 
-  return response.json();
+  throw lastError || new Error('Falha ao consultar Smartsheet.');
 }
 
 function normalizeName(value) {
@@ -2122,13 +2690,72 @@ function getWipClientFocalPoint(row) {
       'Client Focal Point*',
       'Client Focal Point',
       'Client Focal Point *',
+      'Focal Point',
       'Focal Point Cliente',
       'Ponto Focal Cliente',
+      'Ponto Focal',
+      'Client Responsible',
+      'Client Representative',
+      'Client Contact',
+      'Responsible Client',
+      'Contato Cliente',
+      'Contato do Cliente',
+      'Responsável Cliente',
+      'Responsavel Cliente',
+      'Cliente Responsável',
+      'Cliente Responsavel',
     ],
     [
       'Client Focal Point',
       'Focal Point',
       'Ponto Focal',
+      'Client Responsible',
+      'Client Representative',
+      'Client Contact',
+      'Responsible Client',
+      'Contato Cliente',
+      'Responsavel Cliente',
+      'Responsável Cliente',
+    ]
+  );
+}
+
+function getWipPlannedStartDate(row) {
+  return findTextValueByNormalizedColumn(
+    row,
+    [
+      'Acceptance Date - PO date to be updated*',
+      'Acceptance Date - PO date to be updated',
+      'Acceptance Date - PO date to be updated *',
+      'Acceptance Date',
+      'PO Acceptance Date',
+      'Planned Start Date',
+    ],
+    [
+      'Acceptance Date',
+      'PO date to be updated',
+      'PO Acceptance',
+      'Planned Start',
+    ]
+  );
+}
+
+function getWipPlannedFinishDate(row) {
+  return findTextValueByNormalizedColumn(
+    row,
+    [
+      'Contractual PO Date*',
+      'Contractual PO Date',
+      'Contractual PO Date *',
+      'Contractual Date',
+      'PO Contractual Date',
+      'Planned Finish Date',
+    ],
+    [
+      'Contractual PO Date',
+      'Contractual Date',
+      'PO Contractual',
+      'Planned Finish',
     ]
   );
 }
@@ -2209,6 +2836,48 @@ function buildWipClientFocalMap(rows) {
   return focalMap;
 }
 
+function buildWipScheduleDateMap(rows, valueGetter, options = {}) {
+  const dateMap = new Map();
+  const mode = options.mode === 'earliest' ? 'earliest' : 'latest';
+  const source = String(options.source || 'Work in Progress - STEP').trim();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const projectRef = getWipProjectRef(row);
+    const rawDate = valueGetter(row);
+    const key = normalizeBspLookupKey(projectRef);
+    if (!key || !rawDate) continue;
+
+    const parsed = parseDateObject(rawDate);
+    if (!parsed) continue;
+    const formatted = formatDateValue(parsed);
+    const current = dateMap.get(key);
+    const shouldReplace = !current
+      || (mode === 'earliest' ? parsed < current.date : parsed > current.date);
+    if (shouldReplace) {
+      dateMap.set(key, {
+        value: formatted,
+        raw: String(rawDate).trim(),
+        date: parsed,
+        source,
+      });
+    }
+  }
+  return dateMap;
+}
+
+function buildWipPlannedStartMap(rows) {
+  return buildWipScheduleDateMap(rows, getWipPlannedStartDate, {
+    mode: 'earliest',
+    source: 'Work in Progress - STEP | Acceptance Date - PO date to be updated*',
+  });
+}
+
+function buildWipPlannedFinishMap(rows) {
+  return buildWipScheduleDateMap(rows, getWipPlannedFinishDate, {
+    mode: 'latest',
+    source: 'Work in Progress - STEP | Contractual PO Date*',
+  });
+}
+
 function buildWipReplannedFinishMap(rows) {
   const replannedMap = new Map();
   for (const row of Array.isArray(rows) ? rows : []) {
@@ -2272,15 +2941,16 @@ function getFocalPointListForProject(project, focalMap) {
   return [];
 }
 
-function getReplannedFinishForProject(project, replannedMap) {
+function getWipScheduleDateForProject(project, dateMap) {
+  const map = dateMap instanceof Map ? dateMap : new Map();
   const keys = getProjectBspLookupKeys(project);
   for (const key of keys) {
-    const direct = replannedMap.get(key);
+    const direct = map.get(key);
     if (direct?.value) return direct;
   }
 
   for (const key of keys) {
-    for (const [mapKey, item] of replannedMap.entries()) {
+    for (const [mapKey, item] of map.entries()) {
       if (!item?.value) continue;
       if (mapKey === key || (mapKey.length >= 6 && key.length >= 6 && (mapKey.endsWith(key) || key.endsWith(mapKey)))) {
         return item;
@@ -2291,29 +2961,124 @@ function getReplannedFinishForProject(project, replannedMap) {
   return null;
 }
 
-async function fetchWipStepPoMap() {
+function getReplannedFinishForProject(project, replannedMap) {
+  return getWipScheduleDateForProject(project, replannedMap);
+}
+
+async function fetchWipStepPoMap(options = {}) {
   try {
     const sheetId = await resolveWipStepSheetId();
-    if (!sheetId) return { poMap: new Map(), focalMap: new Map(), replannedFinishMap: new Map(), version: null, sheetName: WIP_STEP_SHEET_NAME, available: false };
-    const version = await fetchSheetVersion(sheetId);
-    const sheet = await fetchFullSheet(sheetId);
-    const rows = mapApiRows(sheet);
-    return { poMap: buildWipPoMap(rows), focalMap: buildWipClientFocalMap(rows), replannedFinishMap: buildWipReplannedFinishMap(rows), version, sheetName: sheet.name || cache.wipStepSheetName || WIP_STEP_SHEET_NAME, available: true };
+    if (!sheetId) return { poMap: new Map(), focalMap: new Map(), plannedStartMap: new Map(), plannedFinishMap: new Map(), replannedFinishMap: new Map(), version: null, sheetName: WIP_STEP_SHEET_NAME, available: false };
+    const wipFetchOptions = { timeoutMs: Number(options.timeoutMs || WIP_PO_FETCH_TIMEOUT_MS), retries: 1 };
+    const version = await fetchSheetVersion(sheetId, wipFetchOptions);
+    const memoryKey = `${sheetId}:${version || 'no-version'}`;
+    const memoryCached = wipPoMemoryCache[memoryKey];
+    if (memoryCached && Date.now() - Number(memoryCached.savedAt || 0) <= PROJECTS_FAST_CACHE_MS) {
+      return memoryCached.data;
+    }
+
+    // v36.84: leitura leve da base de PO. Não carrega mais a WIP inteira com todas as colunas.
+    const columns = await fetchSheetColumns(sheetId, wipFetchOptions);
+    const columnIds = uniqueColumnIds([
+      findColumnId(columns, ['Project BSP/BPP/B3D*', 'Project BSP/BPP/B3D', 'Project BSP/BPP/B3D *', 'Project'], ['Project BSP', 'BSP/BPP/B3D', 'BSP BPP B3D']),
+      findColumnId(columns, ['Customer PO*', 'Customer PO', 'Customer PO *', 'PO Cliente'], ['Customer PO', 'Cliente PO']),
+      findColumnId(columns, CLIENT_FOCAL_POINT_ALIASES, ['Client Focal Point', 'Focal Point', 'Ponto Focal', 'Client Responsible', 'Client Representative', 'Client Contact', 'Responsible Client', 'Contato Cliente', 'Responsavel Cliente', 'Responsável Cliente']),
+      findColumnId(columns, [
+        'Acceptance Date - PO date to be updated*',
+        'Acceptance Date - PO date to be updated',
+        'Acceptance Date - PO date to be updated *',
+        'Acceptance Date',
+        'PO Acceptance Date',
+        'Planned Start Date',
+      ], ['Acceptance Date', 'PO date to be updated', 'PO Acceptance', 'Planned Start']),
+      findColumnId(columns, [
+        'Contractual PO Date*',
+        'Contractual PO Date',
+        'Contractual PO Date *',
+        'Contractual Date',
+        'PO Contractual Date',
+        'Planned Finish Date',
+      ], ['Contractual PO Date', 'Contractual Date', 'PO Contractual', 'Planned Finish']),
+      findColumnId(columns, [
+        'Deadline Date as Agreeded with Client*',
+        'Deadline Date as Agreeded with Client',
+        'Deadline Date as Agreeded with Client *',
+        'Deadline Date as Agreed with Client*',
+        'Deadline Date as Agreed with Client',
+        'Deadline Date as Agreed with Client *',
+        'Deadline as Agreeded with Client',
+        'Deadline Agreed with Client',
+        'Data Replanejada',
+        'Data replanejada',
+        'Replanejado',
+        'Replanned Date',
+        'Replanned Finish Date',
+      ], [
+        'Deadline Date as Agreeded',
+        'Deadline Date as Agreed',
+        'Agreeded with Client',
+        'Agreed with Client',
+        'Data Replanejada',
+        'Replanejado',
+        'Replanned',
+      ]),
+    ]);
+
+    const sheet = columnIds.length
+      ? await fetchSheetWithColumns(sheetId, columnIds, wipFetchOptions)
+      : await fetchFullSheet(sheetId, { timeoutMs: Math.max(WIP_PO_FETCH_TIMEOUT_MS, Number(wipFetchOptions.timeoutMs || 0)), retries: 1 });
+    let rows = mapApiRows(sheet);
+
+    const projectKeys = options?.projectKeys instanceof Set ? options.projectKeys : null;
+    if (projectKeys?.size) {
+      rows = rows.filter((row) => {
+        const key = normalizeBspLookupKey(getWipProjectRef(row));
+        if (!key) return false;
+        if (projectKeys.has(key)) return true;
+        for (const projectKey of projectKeys) {
+          if (projectKey && key.length >= 6 && projectKey.length >= 6 && (key.endsWith(projectKey) || projectKey.endsWith(key))) return true;
+        }
+        return false;
+      });
+    }
+
+    const data = { poMap: buildWipPoMap(rows), focalMap: buildWipClientFocalMap(rows), plannedStartMap: buildWipPlannedStartMap(rows), plannedFinishMap: buildWipPlannedFinishMap(rows), replannedFinishMap: buildWipReplannedFinishMap(rows), version, sheetName: sheet.name || cache.wipStepSheetName || WIP_STEP_SHEET_NAME, available: true };
+    wipPoMemoryCache[memoryKey] = { savedAt: Date.now(), data };
+    Object.keys(wipPoMemoryCache).forEach((key) => {
+      if (Date.now() - Number(wipPoMemoryCache[key]?.savedAt || 0) > PROJECTS_FAST_CACHE_MS * 2) delete wipPoMemoryCache[key];
+    });
+    return data;
   } catch (error) {
     console.warn('Não foi possível carregar Work in Progress - STEP para vínculo de PO:', error.message);
-    return { poMap: new Map(), focalMap: new Map(), replannedFinishMap: new Map(), version: null, sheetName: WIP_STEP_SHEET_NAME, available: false, error: error.message };
+    return { poMap: new Map(), focalMap: new Map(), plannedStartMap: new Map(), plannedFinishMap: new Map(), replannedFinishMap: new Map(), version: null, sheetName: WIP_STEP_SHEET_NAME, available: false, error: error.message };
   }
 }
 
-function enrichProjectsWithCustomerPo(projects, poMap, focalMap = new Map(), replannedFinishMap = new Map()) {
+function enrichProjectsWithCustomerPo(projects, poMap, focalMap = new Map(), replannedFinishMap = new Map(), plannedStartMap = new Map(), plannedFinishMap = new Map()) {
   const map = poMap instanceof Map ? poMap : new Map();
   const focalPointMap = focalMap instanceof Map ? focalMap : new Map();
   const replannedMap = replannedFinishMap instanceof Map ? replannedFinishMap : new Map();
+  const startMap = plannedStartMap instanceof Map ? plannedStartMap : new Map();
+  const finishMap = plannedFinishMap instanceof Map ? plannedFinishMap : new Map();
   return (Array.isArray(projects) ? projects : []).map((project) => {
     const list = getPoListForProject(project, map).filter(Boolean);
     const uniqueList = Array.from(new Set(list));
-    const focalList = getFocalPointListForProject(project, focalPointMap).filter(Boolean);
-    const uniqueFocalList = Array.from(new Set(focalList));
+    const existingFocalList = [
+      ...collectWipNameValues(project.clientFocalPoint),
+      ...collectWipNameValues(project.clientFocalPointDisplay),
+      ...(Array.isArray(project.clientFocalPointList) ? project.clientFocalPointList.flatMap((value) => collectWipNameValues(value)) : []),
+    ];
+    const focalList = [
+      ...existingFocalList,
+      ...getFocalPointListForProject(project, focalPointMap).filter(Boolean),
+    ];
+    const uniqueFocalList = [];
+    for (const focal of focalList) {
+      const value = String(focal || '').trim();
+      if (value && !uniqueFocalList.some((item) => String(item).toLowerCase() === value.toLowerCase())) uniqueFocalList.push(value);
+    }
+    const plannedStart = getWipScheduleDateForProject(project, startMap);
+    const plannedFinish = getWipScheduleDateForProject(project, finishMap);
     const replanned = getReplannedFinishForProject(project, replannedMap);
     project.customerPoList = uniqueList;
     project.customerPo = uniqueList[0] || '';
@@ -2322,6 +3087,14 @@ function enrichProjectsWithCustomerPo(projects, poMap, focalMap = new Map(), rep
     project.clientFocalPointList = uniqueFocalList;
     project.clientFocalPoint = uniqueFocalList[0] || '';
     project.clientFocalPointDisplay = uniqueFocalList.join(', ');
+    project.acceptanceDate = plannedStart?.value || '';
+    project.acceptanceDateRaw = plannedStart?.raw || '';
+    project.acceptanceDateSource = plannedStart?.source || '';
+    project.contractualPoDate = plannedFinish?.value || '';
+    project.contractualPoDateRaw = plannedFinish?.raw || '';
+    project.contractualPoDateSource = plannedFinish?.source || '';
+    if (plannedStart?.value) project.plannedStartDate = plannedStart.value;
+    if (plannedFinish?.value) project.plannedFinishDate = plannedFinish.value;
     project.replannedFinishDate = replanned?.value || '';
     project.replannedFinishRaw = replanned?.raw || '';
     project.replannedFinishSource = replanned?.source || '';
@@ -2331,13 +3104,116 @@ function enrichProjectsWithCustomerPo(projects, poMap, focalMap = new Map(), rep
   });
 }
 
-async function fetchSheetVersion(sheetId) {
-  const versionData = await apiFetch(`/sheets/${sheetId}/version`);
+async function fetchSheetVersion(sheetId, options = {}) {
+  const versionData = await apiFetch(`/sheets/${sheetId}/version`, options);
   return versionData.version;
 }
 
-async function fetchFullSheet(sheetId) {
-  return apiFetch(`/sheets/${sheetId}?includeAll=true`);
+async function fetchFullSheet(sheetId, options = {}) {
+  return apiFetch(`/sheets/${sheetId}?includeAll=true`, {
+    timeoutMs: options.timeoutMs || SMARTSHEET_FULL_SHEET_TIMEOUT_MS,
+    retries: options.retries || 1,
+  });
+}
+
+function getRequiredTrackingColumnIds(columns = []) {
+  const exact = new Set(TRACKING_REQUIRED_COLUMN_TITLES.map(normalizeColumnTitle).filter(Boolean));
+  const includes = TRACKING_REQUIRED_COLUMN_INCLUDES.map(normalizeColumnTitle).filter(Boolean);
+  return uniqueColumnIds((columns || [])
+    .filter((column) => {
+      const normalized = normalizeColumnTitle(column?.title);
+      if (!normalized) return false;
+      return exact.has(normalized) || includes.some((needle) => normalized.includes(needle));
+    })
+    .map((column) => column.id));
+}
+
+async function fetchOperationalTrackingSheet(sheetId, options = {}) {
+  try {
+    const columns = await fetchSheetColumns(sheetId, {
+      timeoutMs: Math.max(1500, Math.min(Number(options.timeoutMs || SMARTSHEET_FETCH_TIMEOUT_MS), 6000)),
+      retries: options.retries || 1,
+    });
+    const columnIds = getRequiredTrackingColumnIds(columns);
+    const projectColumnId = findColumnId(columns, ['Project']);
+    if (!columnIds.length || (projectColumnId && !columnIds.includes(projectColumnId))) {
+      return fetchFullSheet(sheetId, options);
+    }
+    return fetchSheetWithColumns(sheetId, columnIds, options);
+  } catch (error) {
+    console.warn('[projects] Leitura otimizada por colunas falhou; tentando sheet completa:', error?.message || error);
+    return fetchFullSheet(sheetId, options);
+  }
+}
+
+async function fetchSheetColumns(sheetId, options = {}) {
+  const cacheKey = String(sheetId || '');
+  const cached = smartsheetColumnsCache[cacheKey];
+  if (cached?.columns && Date.now() - Number(cached.savedAt || 0) <= 6 * 60 * 60 * 1000) {
+    return cached.columns;
+  }
+  const response = await apiFetch(`/sheets/${sheetId}/columns?includeAll=true`, options);
+  const columns = Array.isArray(response?.data) ? response.data : (Array.isArray(response?.columns) ? response.columns : []);
+  smartsheetColumnsCache[cacheKey] = { savedAt: Date.now(), columns };
+  return columns;
+}
+
+function findColumnId(columns = [], exactNames = [], includesNames = []) {
+  const exact = new Set((exactNames || []).map(normalizeColumnTitle).filter(Boolean));
+  const includes = (includesNames || []).map(normalizeColumnTitle).filter(Boolean);
+
+  const exactFound = columns.find((column) => exact.has(normalizeColumnTitle(column?.title)));
+  if (exactFound?.id) return String(exactFound.id);
+
+  const includesFound = columns.find((column) => {
+    const normalized = normalizeColumnTitle(column?.title);
+    return normalized && includes.some((needle) => normalized.includes(needle));
+  });
+  return includesFound?.id ? String(includesFound.id) : '';
+}
+
+function uniqueColumnIds(ids = []) {
+  return Array.from(new Set((ids || []).map((id) => String(id || '').trim()).filter(Boolean)));
+}
+
+async function fetchSheetWithColumns(sheetId, columnIds = [], options = {}) {
+  const ids = uniqueColumnIds(columnIds);
+  if (!ids.length) return fetchFullSheet(sheetId, options);
+  return apiFetch(`/sheets/${sheetId}?includeAll=true&columnIds=${encodeURIComponent(ids.join(','))}`, {
+    timeoutMs: options.timeoutMs || SMARTSHEET_ROWS_FETCH_TIMEOUT_MS,
+    retries: options.retries || 1,
+  });
+}
+
+async function fetchSheetRowsByIds(sheetId, rowIds = [], columnIds = [], options = {}) {
+  const ids = Array.from(new Set((rowIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
+  if (!ids.length) {
+    return { name: cache.sheetName || SHEET_NAME, columns: [], rows: [] };
+  }
+
+  const chunks = [];
+  for (let i = 0; i < ids.length; i += CLIENT_SMARTSHEET_ROW_CHUNK_SIZE) {
+    chunks.push(ids.slice(i, i + CLIENT_SMARTSHEET_ROW_CHUNK_SIZE));
+  }
+
+  let mergedSheet = null;
+  const allRows = [];
+  for (const chunk of chunks) {
+    const params = [`rowIds=${encodeURIComponent(chunk.join(','))}`];
+    const colIds = uniqueColumnIds(columnIds);
+    if (colIds.length) params.push(`columnIds=${encodeURIComponent(colIds.join(','))}`);
+    const sheet = await apiFetch(`/sheets/${sheetId}?${params.join('&')}`, {
+      timeoutMs: options.timeoutMs || SMARTSHEET_ROWS_FETCH_TIMEOUT_MS,
+      retries: options.retries || 1,
+    });
+    if (!mergedSheet) mergedSheet = sheet;
+    allRows.push(...(Array.isArray(sheet?.rows) ? sheet.rows : []));
+  }
+
+  return {
+    ...(mergedSheet || {}),
+    rows: allRows.sort((a, b) => Number(a?.rowNumber || 0) - Number(b?.rowNumber || 0)),
+  };
 }
 
 function isWarmPayloadCache() {
@@ -2347,10 +3223,11 @@ function isWarmPayloadCache() {
 
 function cloneCachedPayloadWithMeta(extraMeta = {}) {
   if (!cache.payload) return null;
+  const reconciled = reconcilePayloadAlerts(cache.payload, extraMeta.cacheReason || 'memory-cache');
   return {
-    ...cache.payload,
+    ...reconciled,
     meta: {
-      ...(cache.payload.meta || {}),
+      ...(reconciled.meta || {}),
       ...extraMeta,
     },
   };
@@ -2382,22 +3259,225 @@ function isPayloadOperationallyComplete(payload = {}) {
   return projects.some(payloadProjectHasResolvedCustomerPo);
 }
 
+
+function getFullPersistentCacheKey() {
+  // v37.08 FREE PLAN SAFE: uma única linha no Supabase por ambiente.
+  // Isso evita crescimento de banco e elimina cache por cliente.
+  return `projects:${OPERATION_REGION}:current`;
+}
+
+function getClientPersistentCacheScope(session = {}) {
+  return getClientScopeValues(session).sort().join('|') || normalizeClientScopeValue(session.username || session.name || session.sub || 'client');
+}
+
+function getClientPersistentCacheKey(session = {}) {
+  // Compatibilidade nominal: cliente não grava linha própria no Supabase.
+  // A leitura é feita pelo cache completo e filtrada no backend.
+  return getFullPersistentCacheKey();
+}
+
+function clonePersistentPayload(payload, reason = 'persistent-cache', cacheInfo = {}) {
+  if (!payload) return null;
+  const reconciled = reconcilePayloadAlerts(payload, reason);
+  const ageMs = cacheInfo.ageMs == null ? null : Number(cacheInfo.ageMs);
+  const autoRefreshRecommended = ageMs != null && ageMs >= TRACKING_CACHE_AUTO_REFRESH_AFTER_MS;
+  return {
+    ...reconciled,
+    meta: {
+      ...(reconciled.meta || {}),
+      servedFromPersistentCache: true,
+      stale: autoRefreshRecommended,
+      cacheReason: reason,
+      persistentCacheServedAt: new Date().toISOString(),
+      persistentCacheUpdatedAt: cacheInfo.updatedAt || null,
+      persistentCacheAgeMs: ageMs,
+      persistentCacheAutoRefreshAfterMs: TRACKING_CACHE_AUTO_REFRESH_AFTER_MS,
+      persistentCacheLastWriteReason: cacheInfo.lastWriteReason || null,
+      persistentCacheRefreshStartedAt: cacheInfo.refreshStartedAt || null,
+      persistentCacheRefreshLockUntil: cacheInfo.refreshLockUntil || null,
+      persistentCacheRefreshLockOwner: cacheInfo.refreshLockOwner || null,
+      autoRefreshRecommended,
+    },
+  };
+}
+
+
+function cloneBundledFallbackPayload(reason = 'bundled-fallback') {
+  if (!ALLOW_BUNDLED_FALLBACK) {
+    console.warn('[projects] Fallback empacotado bloqueado em produção:', reason);
+    return null;
+  }
+  const fallbackPayload = readBundledFallbackPayloadSync();
+  if (!fallbackPayload || !Array.isArray(fallbackPayload.projects) || !fallbackPayload.projects.length) return null;
+  const reconciled = reconcilePayloadAlerts(fallbackPayload, reason);
+  return {
+    ...reconciled,
+    ok: true,
+    meta: {
+      ...(reconciled.meta || {}),
+      servedFromBundledFallback: true,
+      fallbackMayBeIncomplete: !isPayloadOperationallyComplete(fallbackPayload),
+      stale: true,
+      cacheReason: reason,
+      fallbackServedAt: new Date().toISOString(),
+      operationalUseBlockedByDefault: true,
+    },
+  };
+}
+
+async function readBestAvailableFullPayload(reason = 'best-available-cache') {
+  const staleMemoryPayload = cloneCachedPayloadWithMeta({ stale: true, staleReason: reason, cacheReason: reason });
+  if (staleMemoryPayload && Array.isArray(staleMemoryPayload.projects) && staleMemoryPayload.projects.length && isPayloadOperationallyComplete(staleMemoryPayload)) {
+    return staleMemoryPayload;
+  }
+
+  const persistentPayload = await readPersistentFullPayload(`persistent-cache-${reason}`);
+  if (persistentPayload) return persistentPayload;
+
+  const bundledPayload = cloneBundledFallbackPayload(`bundled-fallback-${reason}`);
+  if (bundledPayload) return bundledPayload;
+
+  return null;
+}
+
+async function readBestAvailablePayloadForSession(session = {}, reason = 'best-available-cache-client') {
+  if (!session || session.role !== 'client') return readBestAvailableFullPayload(reason);
+
+  const scopedMemoryPayload = cache.payload
+    ? scopePayloadForSession(cloneCachedPayloadWithMeta({ stale: true, staleReason: reason, cacheReason: reason }) || cache.payload, session)
+    : null;
+  if (scopedMemoryPayload && isUsableClientPayload(scopedMemoryPayload, session)) return scopedMemoryPayload;
+
+  const persistentPayload = await readPersistentPayloadForSession(session, `persistent-cache-${reason}`);
+  if (persistentPayload) return persistentPayload;
+
+  const bundledPayload = cloneBundledFallbackPayload(`bundled-fallback-${reason}`);
+  if (bundledPayload) {
+    const scopedBundledPayload = scopePayloadForSession(bundledPayload, session);
+    if (isUsableClientPayload(scopedBundledPayload, session)) {
+      scopedBundledPayload.meta = {
+        ...(scopedBundledPayload.meta || {}),
+        servedFromBundledFallback: true,
+        stale: true,
+        cacheReason: `bundled-fallback-${reason}`,
+        fallbackServedAt: new Date().toISOString(),
+      };
+      return scopedBundledPayload;
+    }
+  }
+
+  return null;
+}
+
+async function readPersistentFullPayload(reason = 'persistent-cache', options = {}) {
+  const maxAgeMs = options.loginRead ? PERSISTENT_CACHE_LOGIN_MAX_AGE_MS : PERSISTENT_CACHE_MAX_AGE_MS;
+  const cached = await readTrackingCache(getFullPersistentCacheKey(), { maxAgeMs });
+  const payload = cached?.payload;
+  if (!payload || !Array.isArray(payload.projects) || !payload.projects.length) return null;
+  if (!isPayloadOperationallyComplete(payload)) return null;
+  const updatedAtMs = cached.updatedAt ? new Date(cached.updatedAt).getTime() : 0;
+  return clonePersistentPayload(payload, reason, {
+    updatedAt: cached.updatedAt || null,
+    ageMs: updatedAtMs > 0 ? Date.now() - updatedAtMs : null,
+    lastWriteReason: cached.lastWriteReason || null,
+    refreshStartedAt: cached.refreshStartedAt || null,
+    refreshLockUntil: cached.refreshLockUntil || null,
+    refreshLockOwner: cached.refreshLockOwner || null,
+  });
+}
+
+async function readPersistentPayloadForSession(session = {}, reason = 'persistent-cache-client', options = {}) {
+  // v37.08 FREE PLAN SAFE: não existe mais cache persistente separado por cliente.
+  // O backend lê uma única base operacional e filtra a carteira do cliente antes de responder.
+  const fullPayload = await readPersistentFullPayload(reason, options);
+  if (!fullPayload) return null;
+  if (!session || session.role !== 'client') return fullPayload;
+  const scoped = scopePayloadForSession(fullPayload, session);
+  // v37.14: se o cliente possui escopo explícito e a carteira filtrada é vazia,
+  // devolve a resposta vazia rapidamente pelo cache persistente. Isso evita cair no
+  // Smartsheet ao vivo a cada login quando o cliente não possui BSPs válidas ou quando
+  // o filtro exato remove empresas do mesmo grupo, como BW ENERGY x BW LNG.
+  if (isUsableClientPayload(scoped, session)) {
+    scoped.meta = {
+      ...(scoped.meta || {}),
+      servedFromPersistentCache: true,
+      stale: true,
+      cacheReason: reason,
+      persistentCacheMode: 'single-full-cache-filtered-by-backend',
+      persistentCacheServedAt: new Date().toISOString(),
+      emptyClientScopeResolved: Array.isArray(scoped.projects) && scoped.projects.length === 0,
+    };
+    return scoped;
+  }
+  return null;
+}
+
+function persistFullPayloadInBackground(payload, options = {}) {
+  if (!payload || !Array.isArray(payload.projects) || !payload.projects.length) return Promise.resolve(false);
+  return writeTrackingCache(getFullPersistentCacheKey(), payload, {
+    scope: 'single-current-cache',
+    source: String(options.source || `projects-${OPERATION_REGION}`),
+    version: payload?.meta?.version || '',
+    reason: String(options.reason || 'full-refresh-single-row-free-plan'),
+    forceWrite: Boolean(options.forceWrite),
+  }).catch(() => null);
+}
+
+function persistClientPayloadInBackground(session = {}, payload) {
+  // v37.08 FREE PLAN SAFE: não grava cache por cliente no Supabase.
+  // Cliente usa a base única persistente, filtrada no backend, ou cache em memória/local.
+  return false;
+}
+
+function buildCacheUnavailableError() {
+  const error = new Error('Cache operacional do Supabase ainda não disponível. Use o botão Atualizar ou aguarde a rotina agendada de 15 minutos.');
+  error.code = 'PERSISTENT_CACHE_UNAVAILABLE';
+  return error;
+}
+
+async function readLoginCacheOnlyPayloadForSession(session = {}, reason = 'login-cache-only') {
+  if (session?.role === 'client') {
+    return readPersistentPayloadForSession(session, reason, { loginRead: true });
+  }
+  return readPersistentFullPayload(reason, { loginRead: true });
+}
+
+
+async function fetchCurrentTrackingSheetVersion(options = {}) {
+  const sheetId = await resolveSheetId();
+  const version = await fetchSheetVersion(sheetId, options);
+  return { sheetId, version };
+}
+
 async function buildPayload(options = {}) {
-  if (!TOKEN) throw new Error("SMARTSHEET_TOKEN não configurado.");
+  if (!TOKEN) {
+    const fallbackPayload = cloneBundledFallbackPayload('missing-smartsheet-token');
+    if (fallbackPayload) return fallbackPayload;
+    throw new Error("SMARTSHEET_TOKEN não configurado.");
+  }
   const force = Boolean(options.force);
   const preferCache = Boolean(options.preferCache);
+  const bypassMemoryCache = Boolean(options.bypassMemoryCache || options.persistentFirst);
+
+  // v37.20: quando a leitura é cache-only/preferCache, prioriza o Supabase persistente
+  // antes do cache em memória da Function. Isso evita exibir uma hora antiga logo após
+  // o botão Atualizar ou após a rotina agendada gravar uma base nova em outra instância.
+  if (!force && preferCache) {
+    const persistentPayload = await readPersistentFullPayload('persistent-cache-login-cache-only', { loginRead: true });
+    if (persistentPayload) return persistentPayload;
+  }
 
   // Mantém o Portal do Cliente e o painel interno rápidos em F5/login:
   // se a função Netlify ainda estiver aquecida e uma base completa foi validada há pouco,
   // responde pelo cache em memória sem reler Tracking + base de PO.
-  if (!force && isWarmPayloadCache() && isPayloadOperationallyComplete(cache.payload)) {
-    return cache.payload;
+  if (!force && !bypassMemoryCache && isWarmPayloadCache() && isPayloadOperationallyComplete(cache.payload)) {
+    return cloneCachedPayloadWithMeta({ cacheReason: 'warm-memory-alert-reconcile' }) || cache.payload;
   }
 
   // Caminho crítico de login: se já há um payload válido em memória, devolver primeiro
   // a última versão conhecida evita que a tela fique bloqueada por checagem de versão
   // do Smartsheet. O botão "Atualizar agora" continua usando force=1 e busca fresco.
-  if (!force && preferCache && cache.payload && isPayloadOperationallyComplete(cache.payload)) {
+  if (!force && preferCache && !bypassMemoryCache && cache.payload && isPayloadOperationallyComplete(cache.payload)) {
     return cloneCachedPayloadWithMeta({
       ...(cache.payload.meta || {}),
       servedFromFastCache: true,
@@ -2405,23 +3485,12 @@ async function buildPayload(options = {}) {
     }) || cache.payload;
   }
 
-  // v32: Se preferCache=1 e não temos cache em memória, tenta ler o snapshot em disco (fallback)
-  // de forma síncrona para garantir resposta instantânea no login.
-  if (!force && preferCache && !cache.payload) {
-    const diskPayload = readBundledFallbackPayloadSync();
-    if (diskPayload && diskPayload.projects && diskPayload.projects.length > 0 && isPayloadOperationallyComplete(diskPayload)) {
-      cache.payload = diskPayload;
-      cache.lastSync = diskPayload.meta?.lastSync || new Date().toISOString();
-      // Não marcamos lastVersionCheck para forçar uma revalidação em background depois
-      return cloneCachedPayloadWithMeta({
-        ...(diskPayload.meta || {}),
-        servedFromDiskFallback: true,
-        cacheReason: 'disk-fallback',
-      });
-    }
-    if (diskPayload && diskPayload.projects && diskPayload.projects.length > 0) {
-      console.warn('[projects] Snapshot em disco ignorado porque está sem PO carregada; buscando Smartsheet completo.');
-    }
+  // v37.17/v37.20: se o Supabase persistente não existir, só então tenta fallback permitido.
+  // O login normal não chama Smartsheet quando PROJECTS_ALLOW_SMARTSHEET_ON_CACHE_MISS=0.
+  if (!force && preferCache) {
+    const bundledPayload = cloneBundledFallbackPayload('bundled-fallback-prefer-cache');
+    if (bundledPayload) return bundledPayload;
+    if (!PROJECTS_ALLOW_SMARTSHEET_ON_CACHE_MISS) throw buildCacheUnavailableError();
   }
 
   const sheetId = await resolveSheetId();
@@ -2430,20 +3499,23 @@ async function buildPayload(options = {}) {
     version = await fetchSheetVersion(sheetId);
     cache.lastVersionCheck = Date.now();
   } catch (error) {
-    const stalePayload = !force ? cloneCachedPayloadWithMeta({ stale: true, staleReason: 'version-check-failed' }) : null;
-    if (stalePayload) return stalePayload;
+    const fallbackPayload = !force ? await readBestAvailableFullPayload('version-check-failed') : null;
+    if (fallbackPayload) return fallbackPayload;
     throw error;
   }
 
   // Preserva a velocidade: se a base principal não mudou, não força leitura da base complementar de PO.
   // O botão Atualizar agora usa force=1 para recalcular tudo quando necessário.
   if (!force && cache.payload && cache.version === version && isPayloadOperationallyComplete(cache.payload)) {
-    return cache.payload;
+    return cloneCachedPayloadWithMeta({ cacheReason: 'same-version-alert-reconcile' }) || cache.payload;
   }
 
-  const wipPoPromise = fetchWipStepPoMap().catch((error) => ({
+  const wipPoPromise = fetchWipStepPoMap({ timeoutMs: Number(options.wipPoTimeoutMs || WIP_PO_FETCH_TIMEOUT_MS) }).catch((error) => ({
     poMap: new Map(),
     focalMap: new Map(),
+    plannedStartMap: new Map(),
+    plannedFinishMap: new Map(),
+    replannedFinishMap: new Map(),
     version: cache.wipStepVersion || null,
     sheetName: cache.wipStepSheetName || WIP_STEP_SHEET_NAME,
     available: false,
@@ -2453,14 +3525,14 @@ async function buildPayload(options = {}) {
   let wipPoData;
   let sheet;
   try {
-    [wipPoData, sheet] = await Promise.all([wipPoPromise, fetchFullSheet(sheetId)]);
+    [wipPoData, sheet] = await Promise.all([wipPoPromise, fetchOperationalTrackingSheet(sheetId, { timeoutMs: Number(options.fullSheetTimeoutMs || SMARTSHEET_FULL_SHEET_TIMEOUT_MS) })]);
   } catch (error) {
-    const stalePayload = !force ? cloneCachedPayloadWithMeta({ stale: true, staleReason: 'sheet-fetch-failed' }) : null;
-    if (stalePayload) return stalePayload;
+    const fallbackPayload = !force ? await readBestAvailableFullPayload('sheet-fetch-failed') : null;
+    if (fallbackPayload) return fallbackPayload;
     throw error;
   }
   const rows = mapApiRows(sheet);
-  const projects = enrichProjectsWithCustomerPo(buildProjects(rows), wipPoData.poMap, wipPoData.focalMap, wipPoData.replannedFinishMap);
+  const projects = enrichProjectsWithCustomerPo(buildProjects(rows), wipPoData.poMap, wipPoData.focalMap, wipPoData.replannedFinishMap, wipPoData.plannedStartMap, wipPoData.plannedFinishMap);
   const stats = buildStats(projects);
   const alertData = buildAlerts(projects);
 
@@ -2497,25 +3569,64 @@ async function buildPayload(options = {}) {
   cache.lastVersionCheck = Date.now();
   cache.payload = payload;
 
-  // v32: Salva snapshot em disco em background para persistência entre reinicializações
+  // v37.07/v37.15: Supabase é o cache persistente confiável entre cold starts.
+  const persistentWritePromise = persistFullPayloadInBackground(payload, {
+    forceWrite: Boolean(options.forcePersistentCacheWrite),
+    reason: options.persistentWriteReason || (options.forcePersistentCacheWrite ? 'manual-or-scheduled-refresh-force-write' : 'full-refresh-single-row-free-plan'),
+    source: options.persistentWriteSource || `projects-${OPERATION_REGION}`,
+  });
+  if (options.waitForPersistentCacheWrite) {
+    await persistentWritePromise;
+  }
+
+  // v37.64: QR Codes de ISO são criados automaticamente quando o cache do Tracking é atualizado.
+  // Não bloqueia o painel se a tabela ainda não foi criada ou se o Supabase oscilar.
+  const isoQrSyncPromise = ensureIsoQrCodesForPayload(payload, {
+    source: options.persistentWriteSource || `projects-${OPERATION_REGION}`,
+    baseUrl: options.baseUrl || '',
+    timeoutMs: Number(process.env.ISO_QR_SUPABASE_TIMEOUT_MS || 9000),
+  }).catch((error) => {
+    console.warn('[iso-qr] Geração automática ignorada:', error?.message || error);
+    return null;
+  });
+  if (options.waitForIsoQrSync || options.waitForPersistentCacheWrite) {
+    await isoQrSyncPromise;
+  }
+
+  // Mantém snapshot local apenas como compatibilidade operacional; Netlify pode ter filesystem efêmero.
   savePayloadToDisk(payload).catch(err => console.error('[v32] Erro ao salvar snapshot:', err.message));
 
   return payload;
 }
 
 function resolveFallbackPath() {
-  return path.resolve(__dirname, '../../netlify/data/fallback-projects.json');
+  const candidates = [
+    path.resolve(__dirname, 'fallback-projects.json'),
+    path.resolve(__dirname, '..', 'data', 'fallback-projects.json'),
+    path.resolve(__dirname, '..', '..', 'netlify', 'data', 'fallback-projects.json'),
+    path.resolve(process.cwd(), 'netlify', 'data', 'fallback-projects.json'),
+    path.resolve(process.cwd(), 'data', 'fallback-projects.json'),
+  ];
+  return candidates.find((filePath) => fs.existsSync(filePath)) || candidates[0];
 }
 
 function readBundledFallbackPayloadSync() {
-  try {
-    const filePath = resolveFallbackPath();
-    if (fs.existsSync(filePath)) {
-      const raw = fs.readFileSync(filePath, 'utf8');
-      return JSON.parse(raw);
+  const candidates = [
+    path.resolve(__dirname, 'fallback-projects.json'),
+    path.resolve(__dirname, '..', 'data', 'fallback-projects.json'),
+    path.resolve(__dirname, '..', '..', 'netlify', 'data', 'fallback-projects.json'),
+    path.resolve(process.cwd(), 'netlify', 'data', 'fallback-projects.json'),
+    path.resolve(process.cwd(), 'data', 'fallback-projects.json'),
+  ];
+  for (const filePath of candidates) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const raw = fs.readFileSync(filePath, 'utf8');
+        return JSON.parse(raw);
+      }
+    } catch (err) {
+      console.error('[v36.91] Erro ao ler fallback em disco:', filePath, err.message);
     }
-  } catch (err) {
-    console.error('[v32] Erro ao ler fallback em disco (sync):', err.message);
   }
   return null;
 }
@@ -2548,7 +3659,8 @@ function normalizeClientScopeValue(value) {
   const normalized = String(value || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9\s]/g, '')
+    // v37.14: preserva separadores como espaços. Ex.: BW_ENERGY_BR => "bw energy br".
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
@@ -2564,32 +3676,80 @@ const CLIENT_SCOPE_GENERIC_WORDS = new Set([
   'cliente', 'client', 'portal', 'usuario', 'user', 'login'
 ]);
 
-function getClientScopeValues(session = {}) {
-  // v36.55: algumas sessões antigas vinham sem clientKey/clientName no cookie.
-  // Quando isso acontece, o /api/auth-me pode exibir o cliente corretamente,
-  // mas /api/projects filtrava a carteira para zero BSPs. Usamos também name/username
-  // como fallback de escopo, mantendo palavras genéricas fora da comparação.
-  return [
-    session.clientKey,
-    session.clientName,
-    session.name,
-    session.username,
-    ...(Array.isArray(session.allowedClients) ? session.allowedClients : []),
-  ]
-    .map((value) => normalizeClientScopeValue(value))
-    .filter(Boolean)
-    .filter((value) => {
-      const primary = getClientPrimaryToken(value);
-      return primary && primary.length >= 2 && !CLIENT_SCOPE_GENERIC_WORDS.has(primary);
-    });
-}
-
-function getClientPrimaryToken(value) {
+function stripClientRegionSuffix(value) {
   const normalized = normalizeClientScopeValue(value);
   if (!normalized) return '';
+  return normalized
+    .replace(/\s+(br|pt|brazil|brasil|portugal)$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function addUniqueClientScopeValue(values, value) {
+  const normalized = normalizeClientScopeValue(value);
+  if (!normalized) return;
+  if (!values.some((item) => normalizeClientScopeValue(item) === normalized)) values.push(value);
+}
+
+function expandClientScopeAliases(rawValues = []) {
+  const values = [];
+  const add = (value) => addUniqueClientScopeValue(values, value);
+
+  rawValues.forEach(add);
+
+  // Também aceita clientKey cadastrado com sufixo/região, sem transformar isso em filtro amplo.
+  // Ex.: BW_ENERGY_BR libera apenas "BW ENERGY", nunca "BW LNG".
+  rawValues.forEach((value) => {
+    const stripped = stripClientRegionSuffix(value);
+    if (stripped) add(stripped);
+  });
+
+  const normalized = values.map((value) => normalizeClientScopeValue(value)).filter(Boolean);
+  const compacted = normalized.map((value) => value.replace(/[^a-z0-9]+/g, ''));
+  const hasToken = (...tokens) => tokens.some((token) => normalized.includes(token) || compacted.includes(String(token).replace(/[^a-z0-9]+/g, '')));
+
+  // v36.79: segurança para o Portal Portugal.
+  // Algumas bases do Tracking vêm com Client = "STEP PORTUGAL", enquanto o login do cliente é SBM/SBM_PT.
+  // Esta expansão é explícita e limitada ao cliente SBM, sem liberar grupos por palavra parecida.
+  if (hasToken('sbm', 'sbm pt', 'sbmpt')) {
+    add('STEP PORTUGAL');
+    add('STEP PORTUGAL PT');
+    add('SBM Offshore');
+    add('SBM OFFSHORE');
+  }
+
+  return values;
+}
+
+function isValidClientScopeValue(value) {
+  const normalized = normalizeClientScopeValue(value);
+  if (!normalized || normalized.length < 2) return false;
   const words = normalized.split(/\s+/).filter(Boolean);
-  if (!words.length) return '';
-  return words.find((word) => word.length >= 2 && !CLIENT_SCOPE_GENERIC_WORDS.has(word)) || words[0];
+  if (words.length === 1 && CLIENT_SCOPE_GENERIC_WORDS.has(words[0])) return false;
+  return true;
+}
+
+function getClientScopeValues(session = {}) {
+  // v37.14: escopo de cliente agora é estrito por nome exato/alias explícito.
+  // Não usamos mais a primeira palavra como fallback, pois BW ENERGY e BW LNG pertencem ao grupo BW,
+  // mas são clientes diferentes e não podem compartilhar carteira por semelhança.
+  const configuredScopes = [
+    session.clientKey,
+    session.clientName,
+    ...(Array.isArray(session.allowedClients) ? session.allowedClients : []),
+  ].filter((value) => String(value || '').trim());
+
+  // Fallback legado apenas se a sessão realmente não trouxer clientKey/clientName/allowedClients.
+  // Isso evita que nome de usuário seja usado como escopo quando já existe cliente cadastrado.
+  const rawValues = configuredScopes.length
+    ? configuredScopes
+    : [session.name, session.username, session.rawUsername].filter((value) => String(value || '').trim());
+
+  return expandClientScopeAliases(rawValues)
+    .map((value) => normalizeClientScopeValue(value))
+    .filter(Boolean)
+    .filter(isValidClientScopeValue)
+    .filter((value, index, arr) => arr.indexOf(value) === index);
 }
 
 function projectBelongsToClientScope(project, session = {}) {
@@ -2599,19 +3759,13 @@ function projectBelongsToClientScope(project, session = {}) {
 
   const client = normalizeClientScopeValue(project.client);
   if (!client) return false;
-  const clientPrimary = getClientPrimaryToken(client);
 
-  for (const scopeValue of scopeValues) {
-    if (!scopeValue) continue;
-    const scopePrimary = getClientPrimaryToken(scopeValue);
+  // v37.14: comparação exata. Agrupamentos só podem ocorrer se o cliente estiver cadastrado
+  // explicitamente em allowed_clients no Supabase. Ex.: BW ENERGY não enxerga BW LNG por "BW".
+  if (scopeValues.includes(client)) return true;
 
-    // Mantém igualdade exata para cadastros que usam o nome completo do cliente.
-    if (client === scopeValue) return true;
-
-    // Portal do Cliente: prioriza a primeira palavra/nome principal.
-    // Ex.: TRIDENT ENERGY deve bater com TRIDENT, mas não com BW ENERGY apenas por conter ENERGY.
-    if (clientPrimary && scopePrimary && clientPrimary === scopePrimary) return true;
-  }
+  const clientWithoutRegion = stripClientRegionSuffix(client);
+  if (clientWithoutRegion && scopeValues.includes(clientWithoutRegion)) return true;
 
   return false;
 }
@@ -2694,6 +3848,284 @@ function scopePayloadForSession(payload, session = {}) {
   };
 }
 
+
+function clientTextBelongsToScope(clientText, session = {}) {
+  return projectBelongsToClientScope({ client: clientText }, session);
+}
+
+function collectClientRelevantRowIds(indexRows = [], session = {}) {
+  const rowsById = new Map(indexRows.map((row) => [String(row.id), row]));
+  const childrenByParent = new Map();
+  const parentById = new Map();
+
+  for (const row of indexRows) {
+    const id = String(row.id || '');
+    const parentId = row.parentId ? String(row.parentId) : '';
+    if (!id || !parentId) continue;
+    parentById.set(id, parentId);
+    if (!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
+    childrenByParent.get(parentId).push(id);
+  }
+
+  const matched = new Set();
+  for (const row of indexRows) {
+    const client = textValue(row, 'Client');
+    if (clientTextBelongsToScope(client, session)) matched.add(String(row.id));
+  }
+
+  const include = new Set();
+  const includeAncestors = (id) => {
+    let current = String(id || '');
+    let guard = 0;
+    while (current && rowsById.has(current) && guard < 100) {
+      include.add(current);
+      current = parentById.get(current) || '';
+      guard += 1;
+    }
+  };
+  const includeDescendants = (id) => {
+    const stack = [String(id || '')];
+    while (stack.length) {
+      const current = stack.pop();
+      if (!current || include.has(current)) continue;
+      include.add(current);
+      const children = childrenByParent.get(current) || [];
+      for (const childId of children) stack.push(childId);
+    }
+  };
+
+  for (const id of matched) {
+    includeAncestors(id);
+    includeDescendants(id);
+  }
+
+  return Array.from(include);
+}
+
+function collectProjectLookupKeySet(projects = []) {
+  const keys = new Set();
+  for (const project of Array.isArray(projects) ? projects : []) {
+    getProjectBspLookupKeys(project).forEach((key) => { if (key) keys.add(key); });
+  }
+  return keys;
+}
+
+function getClientPayloadCacheKey(sheetId, version, session = {}) {
+  const scope = getClientScopeValues(session).sort().join('|') || normalizeClientScopeValue(session.username || session.name || session.sub || 'client');
+  return `${sheetId}:${version || 'no-version'}:${scope}`;
+}
+
+function getCachedClientPayload(cacheKey) {
+  const cached = clientPayloadCache[cacheKey];
+  if (!cached?.payload) return null;
+  if (Date.now() - Number(cached.savedAt || 0) > CLIENT_PROJECTS_FAST_CACHE_MS) return null;
+  return cached.payload;
+}
+
+function isNonEmptyClientPayload(payload = {}) {
+  return Boolean(payload?.meta?.clientPortal && Array.isArray(payload.projects) && payload.projects.length > 0);
+}
+
+function hasExplicitClientScope(session = {}) {
+  if (!session || session.role !== 'client') return false;
+  const explicitSession = {
+    clientKey: session.clientKey,
+    clientName: session.clientName,
+    allowedClients: Array.isArray(session.allowedClients) ? session.allowedClients : [],
+  };
+  return getClientScopeValues(explicitSession).length > 0;
+}
+
+function isUsableClientPayload(payload = {}, session = {}) {
+  if (!payload?.meta?.clientPortal || !Array.isArray(payload.projects)) return false;
+  if (payload.projects.length > 0) return true;
+  return hasExplicitClientScope(session);
+}
+
+function setCachedClientPayload(cacheKey, payload) {
+  // v37.04: nunca cachear carteira vazia do Portal do Cliente.
+  // Se a primeira consulta ocorrer com sessão ainda não hidratada ou Smartsheet oscilando,
+  // cachear 0 BSP(s) deixa o cliente preso com cards "--" mesmo depois da API voltar.
+  if (payload?.meta?.clientPortal && (!Array.isArray(payload.projects) || payload.projects.length === 0) && !payload?.meta?.emptyClientScopeResolved) {
+    console.warn('[client-cache] Payload vazio do Portal do Cliente não foi cacheado:', cacheKey);
+    return;
+  }
+
+  clientPayloadCache[cacheKey] = { savedAt: Date.now(), payload };
+  const keys = Object.keys(clientPayloadCache);
+  if (keys.length > 60) {
+    keys.sort((a, b) => Number(clientPayloadCache[a]?.savedAt || 0) - Number(clientPayloadCache[b]?.savedAt || 0))
+      .slice(0, Math.max(0, keys.length - 60))
+      .forEach((key) => delete clientPayloadCache[key]);
+  }
+}
+
+async function buildClientPayload(session = {}, options = {}) {
+  if (!TOKEN) {
+    const fallbackPayload = await readBestAvailablePayloadForSession(session, 'missing-smartsheet-token-client');
+    if (fallbackPayload) return fallbackPayload;
+    throw new Error('SMARTSHEET_TOKEN não configurado.');
+  }
+  const force = Boolean(options.force);
+  const preferCache = Boolean(options.preferCache);
+  const bypassMemoryCache = Boolean(options.bypassMemoryCache || options.persistentFirst);
+
+  // v37.20: Portal do Cliente deve ler primeiro a linha atual do Supabase quando
+  // preferCache=true. Assim o horário exibido acompanha imediatamente o cache persistente,
+  // sem reaproveitar uma carteira antiga em memória da Function.
+  if (!force && preferCache) {
+    const persistentClientPayload = await readPersistentPayloadForSession(session, 'persistent-cache-client-login-cache-only', { loginRead: true });
+    if (persistentClientPayload) return persistentClientPayload;
+  }
+
+  // Se o payload completo já estiver aquecido, só filtra em memória.
+  if (!force && !bypassMemoryCache && isWarmPayloadCache() && isPayloadOperationallyComplete(cache.payload)) {
+    const scopedWarmPayload = scopePayloadForSession(cache.payload, session);
+    if (isUsableClientPayload(scopedWarmPayload, session)) return scopedWarmPayload;
+  }
+
+  // v37.17/v37.20: Portal do Cliente não consulta Smartsheet no login.
+  // Se o Supabase persistente não estiver pronto, tenta apenas fallback seguro já existente.
+  if (!force && preferCache) {
+    const fallbackPayload = await readBestAvailablePayloadForSession(session, 'client-prefer-cache');
+    if (fallbackPayload) return fallbackPayload;
+    if (!PROJECTS_ALLOW_SMARTSHEET_ON_CACHE_MISS) throw buildCacheUnavailableError();
+  }
+
+  const sheetId = await resolveSheetId();
+  let version = null;
+  try {
+    version = await fetchSheetVersion(sheetId);
+    cache.lastVersionCheck = Date.now();
+  } catch (error) {
+    const fallbackPayload = !force ? await readBestAvailablePayloadForSession(session, 'client-version-check-failed') : null;
+    if (fallbackPayload) return fallbackPayload;
+    throw error;
+  }
+
+  const cacheKey = getClientPayloadCacheKey(sheetId, version, session);
+  if (!force) {
+    const cached = getCachedClientPayload(cacheKey);
+    // v37.04: cache de cliente só é aceito quando tem pelo menos 1 BSP.
+    // Isso evita reaproveitar uma resposta vazia gerada por sessão incompleta ou leitura parcial.
+    if (cached && isUsableClientPayload(cached, session) && (preferCache || isPayloadOperationallyComplete(cached))) return cached;
+  }
+
+  let columns;
+  try {
+    columns = await fetchSheetColumns(sheetId);
+  } catch (error) {
+    const fallbackPayload = !force ? await readBestAvailablePayloadForSession(session, 'client-columns-failed') : null;
+    if (fallbackPayload) return fallbackPayload;
+    throw error;
+  }
+  const projectColumnId = findColumnId(columns, ['Project']);
+  const clientColumnId = findColumnId(columns, ['Client']);
+  if (!clientColumnId) {
+    throw new Error('Coluna Client não encontrada na planilha principal.');
+  }
+
+  const indexColumnIds = uniqueColumnIds([projectColumnId, clientColumnId]);
+  const indexCacheKey = `${sheetId}:${version || 'no-version'}:${indexColumnIds.join(',')}`;
+  let indexSheet = smartsheetIndexCache[indexCacheKey]?.sheet || null;
+  if (!indexSheet) {
+    try {
+      indexSheet = await fetchSheetWithColumns(sheetId, indexColumnIds);
+    } catch (error) {
+      const fallbackPayload = !force ? await readBestAvailablePayloadForSession(session, 'client-index-failed') : null;
+      if (fallbackPayload) return fallbackPayload;
+      throw error;
+    }
+    smartsheetIndexCache[indexCacheKey] = { savedAt: Date.now(), sheet: indexSheet };
+    Object.keys(smartsheetIndexCache).forEach((key) => {
+      if (Date.now() - Number(smartsheetIndexCache[key]?.savedAt || 0) > PROJECTS_FAST_CACHE_MS * 2) delete smartsheetIndexCache[key];
+    });
+  }
+  const indexRows = mapApiRows(indexSheet);
+  const relevantRowIds = collectClientRelevantRowIds(indexRows, session);
+
+  if (!relevantRowIds.length) {
+    const emptyPayload = {
+      ok: true,
+      meta: {
+        sheetId,
+        sheetName: indexSheet.name || cache.sheetName || SHEET_NAME,
+        version,
+        lastSync: new Date().toISOString(),
+        stageOrder: STAGE_ORDER.filter((stage) => !stage.ignoredCurrentStage).map((stage) => ({
+          key: stage.key,
+          label: stage.label,
+          type: stage.type,
+          optional: Boolean(stage.optional),
+        })),
+        currentWeek: getProductionWeekLabel(getCurrentBrazilDateObject()),
+        clientPortal: true,
+        clientOptimized: true,
+        clientName: session.clientName || session.clientKey || session.name || 'Cliente',
+        clientKey: session.clientKey || '',
+        clientLogoUrl: session.clientLogoUrl || '',
+        alertSignature: '',
+        emptyClientScopeResolved: hasExplicitClientScope(session),
+      },
+      stats: buildStats([]),
+      alerts: [],
+      projects: [],
+    };
+    setCachedClientPayload(cacheKey, emptyPayload);
+    return emptyPayload;
+  }
+
+  let clientSheet;
+  try {
+    clientSheet = await fetchSheetRowsByIds(sheetId, relevantRowIds);
+  } catch (error) {
+    const fallbackPayload = !force ? await readBestAvailablePayloadForSession(session, 'client-rows-failed') : null;
+    if (fallbackPayload) return fallbackPayload;
+    throw error;
+  }
+  const rows = mapApiRows(clientSheet).sort((a, b) => Number(a.rowNumber || 0) - Number(b.rowNumber || 0));
+  let projects = buildProjects(rows).filter((project) => projectBelongsToClientScope(project, session));
+  const projectKeys = collectProjectLookupKeySet(projects);
+  const wipPoData = await fetchWipStepPoMap({ projectKeys, timeoutMs: WIP_PO_FETCH_TIMEOUT_MS });
+  projects = enrichProjectsWithCustomerPo(projects, wipPoData.poMap, wipPoData.focalMap, wipPoData.replannedFinishMap, wipPoData.plannedStartMap, wipPoData.plannedFinishMap);
+
+  const stats = buildStats(projects);
+  const alertData = buildAlerts(projects);
+  const payload = {
+    ok: true,
+    meta: {
+      sheetId,
+      sheetName: clientSheet.name || indexSheet.name || cache.sheetName || SHEET_NAME,
+      version,
+      wipStepSheetName: wipPoData.sheetName || WIP_STEP_SHEET_NAME,
+      wipStepVersion: wipPoData.version || null,
+      wipStepPoAvailable: Boolean(wipPoData.available),
+      lastSync: new Date().toISOString(),
+      stageOrder: STAGE_ORDER.filter((stage) => !stage.ignoredCurrentStage).map((stage) => ({
+        key: stage.key,
+        label: stage.label,
+        type: stage.type,
+        optional: Boolean(stage.optional),
+      })),
+      currentWeek: getProductionWeekLabel(getCurrentBrazilDateObject()),
+      alertSignature: alertData.signature,
+      clientPortal: true,
+      clientOptimized: true,
+      clientRowsLoaded: rows.length,
+      clientName: session.clientName || session.clientKey || session.name || 'Cliente',
+      clientKey: session.clientKey || '',
+      clientLogoUrl: session.clientLogoUrl || '',
+    },
+    stats,
+    alerts: alertData.alerts,
+    projects,
+  };
+
+  setCachedClientPayload(cacheKey, payload);
+  persistClientPayloadInBackground(session, payload);
+  return payload;
+}
+
 exports.handler = async (event) => {
   const warmup = String(event.queryStringParameters?.warmup || "") === "1";
 
@@ -2705,10 +4137,12 @@ exports.handler = async (event) => {
     }
 
     try {
-      await buildPayload({ force: false, preferCache: false });
+      const cachedPayload = await readPersistentFullPayload('warmup-cache-only', { loginRead: true });
       return jsonResponse(200, {
         ok: true,
-        warmed: true,
+        warmed: Boolean(cachedPayload),
+        cacheOnly: true,
+        cacheUpdatedAt: cachedPayload?.meta?.persistentCacheUpdatedAt || cachedPayload?.meta?.lastSync || null,
       }, {
         headers: {
           'cache-control': 'no-store',
@@ -2735,18 +4169,44 @@ exports.handler = async (event) => {
 
   try {
     const force = String(event.queryStringParameters?.force || "") === "1";
-    const preferCache = String(event.queryStringParameters?.preferCache || "") === "1";
-    const sessionPromise = hydrateClientSession(auth.session);
-    const payloadPromise = buildPayload({ force, preferCache });
-    const [session, rawPayload] = await Promise.all([sessionPromise, payloadPromise]);
-    const payload = scopePayloadForSession(rawPayload, session);
+    // v37.17: leitura normal sempre prioriza Supabase/cache. O Smartsheet não é chamado
+    // no login; somente botão manual/rotina agendada atualizam a linha persistente.
+    const preferCache = !force || String(event.queryStringParameters?.preferCache || "") === "1";
+    const session = await hydrateClientSession(auth.session);
+
+    // v36.84: cliente não carrega mais a planilha completa.
+    // Primeiro lê apenas coluna Client/Project, identifica as linhas do cliente,
+    // depois busca só essas linhas + POs compatíveis. Admin/setores continuam com visão completa.
+    const bypassMemoryCache = !force && preferCache;
+    const payload = session.role === 'client'
+      ? await buildClientPayload(session, { force, preferCache, bypassMemoryCache })
+      : await buildPayload({ force, preferCache, bypassMemoryCache });
+
     return jsonResponse(200, payload, {
       headers: {
         'cache-control': 'private, max-age=60, stale-while-revalidate=120',
       },
     });
   } catch (error) {
-    return jsonResponse(500, { ok: false, error: error.message });
+    try {
+      const fallbackPayload = await readBestAvailablePayloadForSession(auth.session, 'handler-catch-fallback');
+      if (fallbackPayload) {
+        return jsonResponse(200, fallbackPayload, {
+          headers: {
+            'cache-control': 'private, max-age=30, stale-while-revalidate=300',
+            'x-step-fallback': '1',
+          },
+        });
+      }
+    } catch (_fallbackError) {}
+    const status = error?.code === 'PERSISTENT_CACHE_UNAVAILABLE' ? 503 : 500;
+    return jsonResponse(status, {
+      ok: false,
+      error: error.message,
+      cacheOnly: error?.code === 'PERSISTENT_CACHE_UNAVAILABLE',
+      needsManualRefresh: error?.code === 'PERSISTENT_CACHE_UNAVAILABLE',
+    });
   }
 };
 exports.buildPayload = buildPayload;
+exports.fetchCurrentTrackingSheetVersion = fetchCurrentTrackingSheetVersion;

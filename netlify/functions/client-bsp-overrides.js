@@ -65,6 +65,31 @@ function canEditProject(project, user) {
   return projectBelongsToUser(project, user);
 }
 
+
+function findCurrentOverride(overrides = [], project = {}, projectRowId = '') {
+  const wantedRowId = String(projectRowId || project?.rowId || project?.rowNumber || '').trim();
+  const wantedNumber = normalizeText(project?.projectNumber || project?.projectDisplay || '');
+  return (Array.isArray(overrides) ? overrides : []).find((item) => {
+    if (wantedRowId && String(item.projectRowId || '') === wantedRowId) return true;
+    if (wantedNumber && normalizeText(item.projectNumber || item.projectDisplay || '') === wantedNumber) return true;
+    return false;
+  }) || null;
+}
+
+function mergeCustomFieldsForIsoDates(currentCustom = {}, incomingCustom = {}) {
+  const current = currentCustom && typeof currentCustom === 'object' && !Array.isArray(currentCustom) ? currentCustom : {};
+  const incoming = incomingCustom && typeof incomingCustom === 'object' && !Array.isArray(incomingCustom) ? incomingCustom : {};
+  const merged = { ...current, ...incoming };
+  const currentIso = current.__isoDateOverrides && typeof current.__isoDateOverrides === 'object' && !Array.isArray(current.__isoDateOverrides)
+    ? current.__isoDateOverrides
+    : {};
+  const incomingIso = incoming.__isoDateOverrides && typeof incoming.__isoDateOverrides === 'object' && !Array.isArray(incoming.__isoDateOverrides)
+    ? incoming.__isoDateOverrides
+    : null;
+  if (incomingIso) merged.__isoDateOverrides = { ...currentIso, ...incomingIso };
+  return merged;
+}
+
 function normalizeDateInput(value) {
   const text = String(value || '').trim();
   if (!text) return '';
@@ -151,7 +176,13 @@ exports.handler = async (event) => {
       const project = await findProject(projectRowId);
       if (!project) return jsonResponse(404, { ok: false, error: 'BSP não encontrada na base operacional.' });
       if (!canEditProject(project, user)) return jsonResponse(403, { ok: false, error: 'Apenas PM vinculado à BSP ou administrador pode editar esta informação.' });
-      const override = await upsertClientBspOverride(normalizeOverrideInput(body, project, user));
+      let bodyForSave = body;
+      if (body.mergeCustomFields === true) {
+        const currentOverride = findCurrentOverride(await listClientBspOverrides(), project, projectRowId);
+        const mergedCustomFields = mergeCustomFieldsForIsoDates(currentOverride?.customFields, body.customFields);
+        bodyForSave = { ...(currentOverride || {}), ...body, customFields: mergedCustomFields };
+      }
+      const override = await upsertClientBspOverride(normalizeOverrideInput(bodyForSave, project, user));
       return jsonResponse(200, { ok: true, override });
     }
 
@@ -170,10 +201,11 @@ exports.handler = async (event) => {
   } catch (error) {
     const message = String(error?.message || 'Falha ao processar ajustes executivos.');
     const missingTable = message.includes('client_bsp_overrides');
-    return jsonResponse(missingTable ? 500 : 400, {
+    return jsonResponse(missingTable ? 503 : 400, {
       ok: false,
+      code: missingTable ? 'CLIENT_BSP_OVERRIDES_TABLE_MISSING' : 'CLIENT_BSP_OVERRIDES_ERROR',
       error: missingTable
-        ? 'Tabela client_bsp_overrides não encontrada. Execute o SQL de criação no Supabase.'
+        ? 'Ajustes executivos temporariamente indisponíveis. Execute o SQL SQL-CRIAR-CLIENT-BSP-OVERRIDES.sql no Supabase para habilitar o salvamento.'
         : message,
     });
   }

@@ -40,26 +40,8 @@ exports.handler = async (event) => {
       return jsonResponse(400, { ok: false, error: 'Informe usuário e senha.' });
     }
 
-    const defaultAdmin = {
-      id: 'u_admin_001',
-      name: 'Administrador',
-      username: 'admin',
-      role: 'admin',
-      sector: 'all',
-      alertSectors: [],
-      projectPmAliases: [],
-      qualityCompetencies: [],
-      active: true,
-      operationRegion: getLoginRegion(event, body),
-      siteKey: getLoginRegion(event, body),
-      passwordHash: 'admin123',
-    };
-
     const operationRegion = getLoginRegion(event, body);
-    let user = await getUserByUsername(username, { operationRegion });
-    if ((!user || !user.active) && normalizeText(username) === 'admin' && password === 'admin123') {
-      user = defaultAdmin;
-    }
+    const user = await getUserByUsername(username, { operationRegion });
 
     if (!user || !user.active || !userPasswordMatches(password, user.passwordHash)) {
       return jsonResponse(401, { ok: false, error: 'Usuário ou senha inválidos.' });
@@ -93,6 +75,7 @@ exports.handler = async (event) => {
         alertSectors: Array.isArray(user.alertSectors) ? user.alertSectors : [],
         projectPmAliases: Array.isArray(user.projectPmAliases) ? user.projectPmAliases : [],
         qualityCompetencies: Array.isArray(user.qualityCompetencies) ? user.qualityCompetencies : [],
+        canViewClientPanel: user.canViewClientPanel === true,
         clientKey: user.clientKey || '',
         operationRegion: user.operationRegion || 'PT',
         siteKey: user.siteKey || user.operationRegion || 'PT',

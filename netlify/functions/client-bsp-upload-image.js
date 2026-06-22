@@ -27,18 +27,6 @@ function getSmartsheetToken() {
     || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN
     || '';
 }
-
-function getTrackingSheetId(payload = {}) {
-  return String(
-    payload.sheetId
-      || process.env.SMARTSHEET_TRACKING_SHEET_ID_PT
-      || process.env.SMARTSHEET_SHEET_ID_PT
-      || process.env.SMARTSHEET_TRACKING_SHEET_ID
-      || process.env.SMARTSHEET_SHEET_ID
-      || DEFAULT_TRACKING_SHEET_ID
-  ).trim() || DEFAULT_TRACKING_SHEET_ID;
-}
-
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // keep payload safe for Netlify/browser flow
 
 function json(statusCode, payload) {
@@ -150,7 +138,7 @@ exports.handler = async (event) => {
   }
 
   const rowId = String(payload.rowId || '').trim();
-  const sheetId = getTrackingSheetId(payload);
+  const sheetId = String(payload.sheetId || process.env.SMARTSHEET_TRACKING_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_TRACKING_SHEET_ID || process.env.SMARTSHEET_SHEET_ID || DEFAULT_TRACKING_SHEET_ID).trim();
   const mimeType = String(payload.mimeType || 'image/jpeg').trim().toLowerCase();
   const fileName = sanitizeFileName(payload.fileName);
   const base64 = normalizeBase64(payload.base64);

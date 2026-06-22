@@ -78,7 +78,7 @@ exports.handler = async (event) => {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
       body: JSON.stringify({
         images: [],
-        error: 'Smartsheet token not configured. Configure SMARTSHEET_API_KEY_PT, SMARTSHEET_TOKEN_PT, SMARTSHEET_API_KEY or SMARTSHEET_TOKEN in Netlify.',
+        error: 'Token Smartsheet não configurado. Configure SMARTSHEET_API_KEY ou SMARTSHEET_TOKEN no Netlify.',
       }),
     };
   }
@@ -86,15 +86,8 @@ exports.handler = async (event) => {
   const query = event.queryStringParameters || {};
 
   // Executive BSP images must be searched in the Tracking sheet only.
-  // A sheetId query parameter is still accepted for controlled tests, but the frontend sends a sheet configurada do Tracking PT.
+  // A sheetId query parameter is still accepted for controlled tests, and the frontend normally lets this function resolve the Portugal Tracking sheet from Netlify ENV.
   const sheetId = getTrackingSheetId(query);
-  if (!sheetId) {
-    return {
-      statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ images: [], error: 'Portugal Tracking sheet not configured. Configure SMARTSHEET_TRACKING_SHEET_ID_PT or SMARTSHEET_SHEET_ID_PT in Netlify.' }),
-    };
-  }
 
   const rowId = query.rowId ? String(query.rowId).trim() : '';
   const explicitRowIds = splitIds(query.rowIds);

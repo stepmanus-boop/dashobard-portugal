@@ -22,41 +22,74 @@ function normalizeClientScopeValue(value) {
   return String(value || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-zA-Z0-9\s]/g, '')
+    // v37.13: preserva separadores como espaços. Ex.: BW_ENERGY_BR => "bw energy br".
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
 }
 
-const CLIENT_SCOPE_GENERIC_WORDS = new Set([
-  'de', 'da', 'do', 'das', 'dos', 'e', 'em', 'the', 'and', 'of', 'a', 'an',
-  'sa', 's', 'ltda', 'ltd', 'llc', 'inc', 'corp', 'company', 'companhia',
-  'brasil', 'brazil', 'global', 'international', 'internacional', 'energy',
-  'energia', 'offshore', 'oil', 'gas', 'petroleo', 'petroleum', 'services',
-  'service', 'servicos', 'solucoes', 'solutions', 'industrial', 'industria'
-]);
-
-function getClientPrimaryToken(value) {
+function stripClientRegionSuffix(value) {
   const normalized = normalizeClientScopeValue(value);
   if (!normalized) return '';
-  const words = normalized.split(/\s+/).filter(Boolean);
-  if (!words.length) return '';
-  return words.find((word) => word.length >= 2 && !CLIENT_SCOPE_GENERIC_WORDS.has(word)) || words[0];
+  return normalized
+    .replace(/\s+(br|pt|brazil|brasil|portugal)$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function expandClientScopeAliases(rawValues = []) {
+  const values = [];
+  const add = (value) => {
+    const normalized = normalizeClientScopeValue(value);
+    if (!normalized) return;
+    if (!values.some((item) => normalizeClientScopeValue(item) === normalized)) values.push(value);
+  };
+
+  rawValues.forEach(add);
+  rawValues.forEach((value) => {
+    const stripped = stripClientRegionSuffix(value);
+    if (stripped) add(stripped);
+  });
+
+  const normalized = values.map((value) => normalizeClientScopeValue(value)).filter(Boolean);
+  const compacted = normalized.map((value) => value.replace(/[^a-z0-9]+/g, ''));
+  const hasToken = (...tokens) => tokens.some((token) => normalized.includes(token) || compacted.includes(String(token).replace(/[^a-z0-9]+/g, '')));
+
+  // Alias explícito legado Portugal/SBM. Não habilita comparação por primeira palavra.
+  if (hasToken('sbm', 'sbm pt', 'sbmpt')) {
+    add('STEP PORTUGAL');
+    add('STEP PORTUGAL PT');
+    add('SBM Offshore');
+    add('SBM OFFSHORE');
+  }
+
+  return values;
+}
+
+function getClientScopeValues(key = {}) {
+  const configuredScopes = [key.clientKey, key.clientName, ...(Array.isArray(key.allowedClients) ? key.allowedClients : [])]
+    .filter((value) => String(value || '').trim());
+  return expandClientScopeAliases(configuredScopes)
+    .map(normalizeClientScopeValue)
+    .filter(Boolean)
+    .filter((value, index, arr) => arr.indexOf(value) === index);
 }
 
 function projectBelongsToClientScope(project, key = {}) {
-  const scopes = [key.clientKey, key.clientName, ...(Array.isArray(key.allowedClients) ? key.allowedClients : [])]
-    .map(normalizeClientScopeValue)
-    .filter(Boolean);
+  const scopes = getClientScopeValues(key);
   if (!project || !scopes.length) return false;
   const client = normalizeClientScopeValue(project.client);
   if (!client) return false;
-  const clientPrimary = getClientPrimaryToken(client);
-  return scopes.some((scope) => {
-    const scopePrimary = getClientPrimaryToken(scope);
-    return client === scope || (clientPrimary && scopePrimary && clientPrimary === scopePrimary);
-  });
+
+  // v37.13: comparação exata para não misturar empresas do mesmo grupo.
+  // BW ENERGY não deve visualizar BW LNG, a menos que BW LNG esteja explicitamente em allowed_clients.
+  if (scopes.includes(client)) return true;
+
+  const clientWithoutRegion = stripClientRegionSuffix(client);
+  return Boolean(clientWithoutRegion && scopes.includes(clientWithoutRegion));
 }
+
 
 function asNumber(value) {
   const num = Number(value || 0);
@@ -123,6 +156,7 @@ function sanitizeSpool(spool = {}) {
     individualProgress: asNumber(spool.individualProgress),
     overallProgress: asNumber(spool.overallProgress),
     milestones: sanitizeMilestones(spool.milestones),
+    stageValues: spool.stageValues && typeof spool.stageValues === 'object' ? spool.stageValues : {},
   };
 }
 
@@ -168,6 +202,7 @@ function sanitizeProject(project = {}, includeSpools = false) {
     clientFocalPointList: Array.isArray(project.clientFocalPointList) ? project.clientFocalPointList : [],
     clientFocalPointDisplay: project.clientFocalPointDisplay || '',
     milestones: sanitizeMilestones(project.milestones),
+    stageValues: project.stageValues && typeof project.stageValues === 'object' ? project.stageValues : {},
     spoolStats: project.spoolStats || {},
   };
   if (includeSpools) base.spools = (Array.isArray(project.spools) ? project.spools : []).map(sanitizeSpool);

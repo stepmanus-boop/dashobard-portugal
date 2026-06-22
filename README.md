@@ -157,9 +157,9 @@ O projeto agora inclui:
 - confirmação de leitura dos alertas
 - persistência automática em arquivos JSON versionados no repositório
 
-### Login inicial
-- usuário: `admin`
-- senha: `admin123`
+### Login
+- O login administrativo padrão foi removido por segurança.
+- Todos os usuários devem existir no Supabase, com senha definida no cadastro do painel.
 
 ### Arquivos usados
 - `data/users.json`

@@ -8758,3 +8758,564 @@ body.client-bsp-upload-image-open {
     min-height: 38px;
   }
 }
+
+/* v37.29 - Cards exclusivos PCP: BSPs vencidas e a vencer */
+.pcp-deadline-card {
+  position: relative;
+  overflow: hidden;
+}
+.pcp-deadline-card::after {
+  content: "PCP";
+  position: absolute;
+  right: 12px;
+  top: 10px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(0,0,0,0.14);
+  color: rgba(238,248,255,0.72);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  font-weight: 800;
+}
+.pcp-deadlines-dialog {
+  width: min(96vw, 1480px);
+  height: min(88vh, 900px);
+}
+.pcp-deadlines-head h3 {
+  color: #f4fbff;
+}
+.pcp-deadlines-content {
+  gap: 16px;
+}
+.pcp-deadline-client-block {
+  border: 1px solid rgba(85, 145, 255, 0.16);
+  border-radius: 18px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(8, 39, 68, 0.86), rgba(3, 17, 31, 0.72));
+}
+.pcp-deadline-client-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(85, 145, 255, 0.16);
+}
+.pcp-deadline-client-head strong {
+  color: #dff6ff;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pcp-deadline-client-head span {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.pcp-deadline-table-wrap {
+  border: 0;
+  border-radius: 0;
+}
+.pcp-deadline-table tbody tr {
+  cursor: pointer;
+}
+.pcp-deadline-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 98px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.pcp-deadline-chip--overdue {
+  color: #ffd7df;
+  border: 1px solid rgba(255, 92, 122, 0.46);
+  background: rgba(255, 92, 122, 0.16);
+}
+.pcp-deadline-chip--due {
+  color: #ffe8b3;
+  border: 1px solid rgba(255, 178, 26, 0.46);
+  background: rgba(255, 178, 26, 0.14);
+}
+.pcp-deadline-empty {
+  border: 1px dashed rgba(85, 145, 255, 0.22);
+  border-radius: 18px;
+  padding: 28px;
+  color: var(--muted);
+  text-align: center;
+  background: rgba(5, 24, 44, 0.56);
+}
+
+/* v37.31 - PCP deadlines: clientes recolhidos e layout mais limpo */
+.pcp-deadlines-dialog {
+  width: min(94vw, 1360px);
+  height: min(86vh, 820px);
+  border-radius: 24px;
+}
+.pcp-deadlines-content {
+  display: block;
+  overflow: auto;
+  padding: 18px 24px 24px;
+}
+.pcp-deadline-client-list {
+  display: grid;
+  gap: 12px;
+}
+.pcp-deadline-client-block {
+  border: 1px solid rgba(84, 171, 255, 0.20);
+  border-radius: 18px;
+  overflow: hidden;
+  background: linear-gradient(180deg, rgba(10, 45, 76, 0.94), rgba(4, 21, 39, 0.86));
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+}
+.pcp-deadline-client-block.is-expanded {
+  border-color: rgba(35, 206, 255, 0.42);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.pcp-deadline-client-toggle {
+  width: 100%;
+  border: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  color: #f3fbff;
+  background: linear-gradient(90deg, rgba(13, 67, 108, 0.92), rgba(4, 28, 52, 0.58));
+  text-align: left;
+}
+.pcp-deadline-client-toggle:hover,
+.pcp-deadline-client-toggle:focus-visible {
+  outline: none;
+  background: linear-gradient(90deg, rgba(16, 88, 140, 0.98), rgba(5, 35, 64, 0.74));
+}
+.pcp-deadline-client-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 240px;
+}
+.pcp-deadline-client-chevron {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(35, 206, 255, 0.28);
+  color: var(--accent);
+  background: rgba(5, 24, 44, 0.78);
+  font-size: 24px;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 0.18s ease, background 0.18s ease;
+}
+.pcp-deadline-client-block.is-expanded .pcp-deadline-client-chevron {
+  transform: rotate(90deg);
+  background: rgba(35, 206, 255, 0.12);
+}
+.pcp-deadline-client-main strong {
+  display: block;
+  color: #f4fbff;
+  font-size: 17px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.pcp-deadline-client-main small {
+  display: block;
+  margin-top: 3px;
+  color: rgba(206, 232, 255, 0.70);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+.pcp-deadline-client-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.pcp-deadline-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #dff7ff;
+  border: 1px solid rgba(88, 176, 255, 0.24);
+  background: rgba(8, 35, 62, 0.74);
+  white-space: nowrap;
+}
+.pcp-deadline-pill--total {
+  color: #61dcff;
+  border-color: rgba(35, 206, 255, 0.38);
+  background: rgba(35, 206, 255, 0.10);
+}
+.pcp-deadline-pill--overdue {
+  color: #ffd5df;
+  border-color: rgba(255, 92, 122, 0.42);
+  background: rgba(255, 92, 122, 0.14);
+}
+.pcp-deadline-pill--today,
+.pcp-deadline-pill--due,
+.pcp-deadline-pill--date {
+  color: #ffe8b3;
+  border-color: rgba(255, 178, 26, 0.36);
+  background: rgba(255, 178, 26, 0.12);
+}
+.pcp-deadline-client-body {
+  padding: 0;
+  border-top: 1px solid rgba(84, 171, 255, 0.16);
+  background: rgba(2, 14, 26, 0.48);
+}
+.pcp-deadline-client-body.hidden {
+  display: none !important;
+}
+.pcp-deadline-table-wrap {
+  max-height: 360px;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+}
+.pcp-deadline-table {
+  min-width: 980px;
+}
+.pcp-deadline-table th,
+.pcp-deadline-table td {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  vertical-align: middle;
+}
+.pcp-deadline-table tbody tr:hover {
+  background: rgba(35, 206, 255, 0.08);
+}
+@media (max-width: 900px) {
+  .pcp-deadline-client-toggle {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .pcp-deadline-client-metrics {
+    justify-content: flex-start;
+  }
+}
+
+/* v37.43 - Correção de rolagem do popup PCP: clientes expansíveis */
+#pcp-deadlines-modal {
+  align-items: center;
+  justify-items: center;
+  padding: 18px;
+  box-sizing: border-box;
+}
+#pcp-deadlines-modal .pcp-deadlines-dialog {
+  width: min(94vw, 1360px);
+  height: min(86vh, 820px);
+  max-height: calc(100vh - 36px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+#pcp-deadlines-modal .pcp-deadlines-head {
+  flex: 0 0 auto;
+}
+#pcp-deadlines-modal .pcp-deadlines-content {
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 18px 24px 28px;
+}
+#pcp-deadlines-modal .pcp-deadline-client-list {
+  padding-bottom: 10px;
+}
+#pcp-deadlines-modal .pcp-deadlines-content::-webkit-scrollbar,
+#pcp-deadlines-modal .pcp-deadline-table-wrap::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+#pcp-deadlines-modal .pcp-deadlines-content::-webkit-scrollbar-track,
+#pcp-deadlines-modal .pcp-deadline-table-wrap::-webkit-scrollbar-track {
+  background: rgba(2, 14, 26, 0.55);
+  border-radius: 999px;
+}
+#pcp-deadlines-modal .pcp-deadlines-content::-webkit-scrollbar-thumb,
+#pcp-deadlines-modal .pcp-deadline-table-wrap::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(35, 206, 255, 0.55), rgba(28, 116, 194, 0.72));
+  border-radius: 999px;
+  border: 2px solid rgba(2, 14, 26, 0.55);
+}
+@media (max-height: 760px) {
+  #pcp-deadlines-modal {
+    align-items: start;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+  #pcp-deadlines-modal .pcp-deadlines-dialog {
+    height: calc(100vh - 20px);
+    max-height: calc(100vh - 20px);
+  }
+  #pcp-deadlines-modal .pcp-deadlines-head {
+    padding-top: 16px;
+    padding-bottom: 10px;
+  }
+  #pcp-deadlines-modal .pcp-deadlines-head h3 {
+    font-size: clamp(24px, 2.4vw, 34px);
+  }
+}
+@media (max-width: 760px) {
+  #pcp-deadlines-modal {
+    padding: 8px;
+  }
+  #pcp-deadlines-modal .pcp-deadlines-dialog {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 16px);
+    max-height: calc(100vh - 16px);
+    border-radius: 18px;
+  }
+  #pcp-deadlines-modal .pcp-deadlines-content {
+    padding: 14px 12px 18px;
+  }
+}
+
+/* v37.44 - Correção i18n: status de etapa em andamento em EN/ES */
+
+
+/* v37.45 - PCP: rolagem definitiva no modal de prazos e tabelas expandidas */
+#pcp-deadlines-modal:not(.hidden) {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 18px !important;
+  overflow: hidden !important;
+}
+#pcp-deadlines-modal .pcp-deadlines-dialog {
+  width: min(96vw, 1460px) !important;
+  height: auto !important;
+  max-height: calc(100dvh - 36px) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+}
+#pcp-deadlines-modal .pcp-deadlines-head {
+  flex: 0 0 auto !important;
+}
+#pcp-deadlines-modal .pcp-deadlines-content {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  max-height: calc(100dvh - 190px) !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding-bottom: 34px !important;
+}
+#pcp-deadlines-modal .pcp-deadline-client-block {
+  flex: 0 0 auto;
+}
+#pcp-deadlines-modal .pcp-deadline-client-body:not(.hidden) {
+  max-height: min(52vh, 460px);
+  overflow: auto;
+}
+#pcp-deadlines-modal .pcp-deadline-table-wrap {
+  max-height: none !important;
+  overflow: visible !important;
+}
+#pcp-deadlines-modal .pcp-deadline-table {
+  min-width: 1080px;
+}
+@media (max-height: 760px) {
+  #pcp-deadlines-modal:not(.hidden) {
+    align-items: flex-start !important;
+    padding: 8px !important;
+  }
+  #pcp-deadlines-modal .pcp-deadlines-dialog {
+    max-height: calc(100dvh - 16px) !important;
+  }
+  #pcp-deadlines-modal .pcp-deadlines-content {
+    max-height: calc(100dvh - 162px) !important;
+  }
+}
+
+/* v37.64 - Pesquisa e impressão de QR Code por ISO */
+.iso-qr-dialog {
+  max-width: min(1120px, calc(100vw - 32px));
+}
+.iso-qr-content {
+  display: grid;
+  gap: 14px;
+}
+.iso-qr-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto auto;
+  gap: 10px;
+  align-items: end;
+}
+.iso-qr-search-field {
+  margin: 0;
+}
+.iso-qr-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+  max-height: min(52vh, 560px);
+  overflow: auto;
+  padding-right: 4px;
+}
+.iso-qr-results.empty-state {
+  display: block;
+  max-height: none;
+}
+.iso-qr-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(123, 213, 255, .18);
+  border-radius: 14px;
+  background: rgba(5, 29, 50, .74);
+}
+.iso-qr-select-line {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 9px;
+  align-items: start;
+  cursor: pointer;
+}
+.iso-qr-select-line strong {
+  display: block;
+  color: #ecf8ff;
+  font-size: .92rem;
+  overflow-wrap: anywhere;
+}
+.iso-qr-select-line small {
+  display: block;
+  margin-top: 3px;
+  color: #9ec8dd;
+  font-size: .76rem;
+  overflow-wrap: anywhere;
+}
+.iso-qr-card-actions,
+.iso-qr-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.iso-qr-preview {
+  padding: 12px;
+  border: 1px solid rgba(82, 227, 154, .24);
+  border-radius: 16px;
+  background: rgba(82, 227, 154, .07);
+}
+.iso-qr-preview-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+.iso-qr-label-preview {
+  width: 210px;
+  min-height: 210px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 14px;
+  background: #fff;
+  color: #000;
+  border: 1px solid #d7dde4;
+}
+.iso-qr-label-preview img {
+  width: 132px;
+  height: 132px;
+  object-fit: contain;
+  display: block;
+}
+.iso-qr-label-preview strong {
+  text-align: center;
+  font-size: .84rem;
+  line-height: 1.18;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 820px) {
+  .iso-qr-toolbar {
+    grid-template-columns: 1fr;
+  }
+  .iso-qr-results {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* v37.82 - organização exclusiva por Etapa Atual para PCP/admin (legado; botão removido na v37.83) */
+.stage-sort-toggle {
+  white-space: nowrap;
+}
+.stage-sort-toggle.is-active {
+  border-color: rgba(69, 191, 255, .82);
+  background: rgba(0, 139, 204, .20);
+  color: #dff7ff;
+  box-shadow: 0 0 0 1px rgba(69, 191, 255, .16) inset;
+}
+.stage-sort-toggle.is-active::before {
+  content: '↕ ';
+  color: #62d1ff;
+}
+
+
+/* v37.83 - Etapa Atual clicável dentro do Controle PCP */
+.pcp-deadline-stage-sort-head {
+  padding: 0 !important;
+}
+.pcp-deadline-stage-sort {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 800;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.pcp-deadline-stage-sort:hover,
+.pcp-deadline-stage-sort:focus-visible {
+  color: #6fd7ff;
+  background: rgba(45, 156, 219, .12);
+  outline: none;
+}
+.pcp-deadline-stage-sort.is-active {
+  color: #8ee3ff;
+  background: rgba(0, 139, 204, .20);
+  box-shadow: inset 0 -2px 0 rgba(95, 215, 255, .85);
+}
+.pcp-deadline-stage-sort-icon {
+  min-width: 1em;
+  color: #65cfff;
+  font-size: .95em;
+  line-height: 1;
+}

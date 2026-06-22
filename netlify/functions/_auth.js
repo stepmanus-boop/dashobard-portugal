@@ -5,7 +5,16 @@ const path = require("path");
 
 const SESSION_COOKIE_NAME = "step_session";
 const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS || 1000 * 60 * 60 * 24 * 7);
-const SESSION_SECRET = process.env.SESSION_SECRET || "step-dev-secret-change-me";
+const SESSION_SECRET = process.env.SESSION_SECRET || '';
+const IS_PRODUCTION_RUNTIME = ['production', 'prod'].includes(String(process.env.NODE_ENV || process.env.CONTEXT || '').toLowerCase()) || Boolean(process.env.NETLIFY);
+
+function getSessionSecret() {
+  if (SESSION_SECRET) return SESSION_SECRET;
+  if (IS_PRODUCTION_RUNTIME) {
+    throw new Error('SESSION_SECRET obrigatório em produção. Configure a variável no Netlify.');
+  }
+  return 'step-local-dev-secret-change-me';
+}
 
 function resolveProjectPath(relativePath) {
   return path.resolve(__dirname, "..", "..", relativePath);
@@ -44,14 +53,14 @@ function fromBase64Url(input) {
 function signToken(payload) {
   const json = JSON.stringify(payload);
   const encoded = toBase64Url(json);
-  const signature = crypto.createHmac("sha256", SESSION_SECRET).update(encoded).digest("hex");
+  const signature = crypto.createHmac("sha256", getSessionSecret()).update(encoded).digest("hex");
   return `${encoded}.${signature}`;
 }
 
 function verifyToken(token) {
   if (!token || !String(token).includes(".")) return null;
   const [encoded, signature] = String(token).split(".");
-  const expected = crypto.createHmac("sha256", SESSION_SECRET).update(encoded).digest("hex");
+  const expected = crypto.createHmac("sha256", getSessionSecret()).update(encoded).digest("hex");
   if (!crypto.timingSafeEqual(Buffer.from(signature || ""), Buffer.from(expected))) return null;
   try {
     const payload = JSON.parse(fromBase64Url(encoded));
@@ -71,6 +80,7 @@ function createSessionCookie(user) {
     alertSectors: normalizeSectorList(user.sector, user.alertSectors),
     projectPmAliases: Array.isArray(user.projectPmAliases) ? user.projectPmAliases : [],
     qualityCompetencies: Array.isArray(user.qualityCompetencies) ? user.qualityCompetencies : [],
+    canViewClientPanel: user.canViewClientPanel === true,
     clientKey: user.clientKey || '',
     clientName: user.clientName || '',
     clientLogoUrl: String(user.clientLogoUrl || '').startsWith('data:') ? '' : (user.clientLogoUrl || ''),
@@ -81,11 +91,13 @@ function createSessionCookie(user) {
     exp: Date.now() + SESSION_TTL_MS,
   };
   const token = signToken(payload);
-  return `${SESSION_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
+  const secureFlag = IS_PRODUCTION_RUNTIME ? '; Secure' : '';
+  return `${SESSION_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax${secureFlag}; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
 }
 
 function clearSessionCookie() {
-  return `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  const secureFlag = IS_PRODUCTION_RUNTIME ? '; Secure' : '';
+  return `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax${secureFlag}; Max-Age=0`;
 }
 
 function parseCookies(headers = {}) {
@@ -182,8 +194,15 @@ function verifyPassword(password, passwordHash) {
 
 async function readLocalJson(relativePath, fallbackValue = []) {
   const filePath = resolveProjectPath(relativePath);
-  const raw = await fs.readFile(filePath, "utf8");
-  return JSON.parse(raw || JSON.stringify(fallbackValue));
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return JSON.parse(raw || JSON.stringify(fallbackValue));
+  } catch (error) {
+    if (String(error?.code || '') === 'ENOENT' || String(error?.message || '').includes('ENOENT')) {
+      return fallbackValue;
+    }
+    throw error;
+  }
 }
 
 module.exports = {

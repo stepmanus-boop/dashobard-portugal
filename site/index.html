@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#041a2d" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="STEP Management" />
+    <meta name="apple-mobile-web-app-title" content="STEP Gerência" />
     <meta name="mobile-web-app-capable" content="yes" />
     <link rel="icon" type="image/x-icon" href="./assets/favicon.ico" />
     <link rel="shortcut icon" href="./assets/favicon.ico" />
@@ -14,8 +14,8 @@
     <link rel="icon" type="image/png" sizes="16x16" href="./assets/favicon-16x16.png" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
-    <title>STEP • Operational Dashboard</title>
-    <link rel="stylesheet" href="./app.css" />
+    <title>STEP • Painel Operacional</title>
+    <link rel="stylesheet" href="./app.css?v=38.12-portugal" />
   </head>
   <body class="auth-locked modal-open">
     <section id="login-progress-overlay" class="login-progress-overlay hidden" aria-live="polite" aria-modal="true" role="status">
@@ -72,6 +72,7 @@
           <button id="open-my-project-signals" class="ghost-button ghost-button--compact hidden" type="button">Minhas sinalizações</button>
           <button id="open-project-signals" class="ghost-button ghost-button--compact hidden" type="button">Alertas Projetos</button>
           <button id="open-stage-updates" class="ghost-button ghost-button--compact hidden" type="button">Apontamentos</button>
+          <button id="open-iso-qr-button" class="ghost-button ghost-button--compact hidden" type="button">Pesquisar QR Code</button>
           <button id="open-admin-panel" class="ghost-button ghost-button--compact hidden" type="button">Admin</button>
           <button id="logout-button" class="ghost-button ghost-button--compact hidden" type="button">Sair</button>
         </div>
@@ -164,6 +165,18 @@
           <span class="summary-label">(M²) Programada</span>
           <strong id="stat-painting-m2">-- m²</strong>
           <small class="summary-card-hint">Clique para detalhar</small>
+        </article>
+        <article class="summary-card summary-card--danger summary-card--clickable pcp-deadline-card hidden" id="pcp-overdue-card" role="button" tabindex="0" aria-controls="pcp-deadlines-modal" aria-expanded="false" title="Exclusivo PCP: abrir BSPs com término planejado vencido">
+          <span class="summary-label">PCP • Vencidas</span>
+          <span class="summary-subtext" id="stat-pcp-overdue-subtext">BSPs vencidas</span>
+          <strong id="stat-pcp-overdue">--</strong>
+          <small class="summary-card-hint">Clique para abrir</small>
+        </article>
+        <article class="summary-card summary-card--warning summary-card--clickable pcp-deadline-card hidden" id="pcp-due-soon-card" role="button" tabindex="0" aria-controls="pcp-deadlines-modal" aria-expanded="false" title="Exclusivo PCP: abrir BSPs com término planejado vencendo em até 15 dias">
+          <span class="summary-label">PCP • A vencer</span>
+          <span class="summary-subtext" id="stat-pcp-due-soon-subtext">Próximos 15 dias</span>
+          <strong id="stat-pcp-due-soon">--</strong>
+          <small class="summary-card-hint">Clique para abrir</small>
         </article>
       </section>
 
@@ -721,6 +734,35 @@
 </div>
 
 
+<div id="iso-qr-modal" class="modal hidden" aria-hidden="true">
+  <div class="modal-backdrop" data-close-iso-qr="true"></div>
+  <div class="modal-dialog modal-dialog--admin iso-qr-dialog" role="dialog" aria-modal="true" aria-labelledby="iso-qr-title">
+    <div class="modal-head">
+      <div>
+        <p class="modal-eyebrow">Rastreamento por ISO</p>
+        <h3 id="iso-qr-title">Pesquisar QR Code</h3>
+        <p class="modal-subtitle">Pesquise ISOs já criados automaticamente pelo cache e imprima etiquetas minimalistas.</p>
+      </div>
+      <button id="iso-qr-close" class="modal-close" type="button" aria-label="Fechar">×</button>
+    </div>
+    <div class="modal-content iso-qr-content">
+      <div class="iso-qr-toolbar">
+        <label class="stack-field iso-qr-search-field">
+          <span>Pesquisar ISO, BSP, Work Order, Vessel ou Tag</span>
+          <input id="iso-qr-search" type="search" placeholder="Digite o ISO completo ou parte da BSP..." autocomplete="off" />
+        </label>
+        <button id="iso-qr-search-button" class="primary-button" type="button">Pesquisar</button>
+        <button id="iso-qr-print-selected" class="ghost-button" type="button" disabled>Imprimir selecionados</button>
+        <button id="iso-qr-download-selected" class="ghost-button" type="button" disabled>Baixar selecionados</button>
+      </div>
+      <div id="iso-qr-feedback" class="inline-feedback"></div>
+      <div id="iso-qr-preview" class="iso-qr-preview hidden"></div>
+      <div id="iso-qr-results" class="iso-qr-results empty-state">Digite uma busca ou clique em pesquisar para carregar os QR Codes recentes.</div>
+    </div>
+  </div>
+</div>
+
+
 <div id="change-password-modal" class="modal hidden" aria-hidden="true">
   <div class="modal-backdrop" data-close-change-password="true"></div>
   <div class="modal-dialog modal-dialog--small" role="dialog" aria-modal="true" aria-labelledby="change-password-title">
@@ -747,6 +789,22 @@
   </div>
 </div>
 
+
+<div id="pcp-deadlines-modal" class="modal hidden" aria-hidden="true">
+  <div class="modal-backdrop" data-close-pcp-deadlines="true"></div>
+  <div class="modal-dialog modal-dialog--admin pcp-deadlines-dialog" role="dialog" aria-modal="true" aria-labelledby="pcp-deadlines-title">
+    <div class="modal-head pcp-deadlines-head">
+      <div>
+        <p class="modal-eyebrow">Controle PCP</p>
+        <h3 id="pcp-deadlines-title">BSPs por prazo</h3>
+        <p id="pcp-deadlines-subtitle" class="modal-subtitle">Demandas agrupadas por cliente.</p>
+      </div>
+      <button id="pcp-deadlines-close" class="modal-close" type="button" aria-label="Fechar">×</button>
+    </div>
+    <div id="pcp-deadlines-content" class="modal-content pcp-deadlines-content"></div>
+  </div>
+</div>
+
 <div id="stage-updates-modal" class="modal hidden" aria-hidden="true">
   <div class="modal-backdrop" data-close-stage-updates="true"></div>
   <div class="modal-dialog modal-dialog--admin" role="dialog" aria-modal="true" aria-labelledby="stage-updates-title">
@@ -764,7 +822,12 @@
 
     <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
-    <script src="./app.js"></script>
-    <script src="./i18n.js?v=6"></script>
+    <script src="./js/app-01-core.js?v=37.83-pcp-stage-header-sort"></script>
+    <script src="./js/app-02-client-portal.js?v=37.83-pcp-stage-header-sort"></script>
+    <script src="./js/app-03-dashboard-render.js?v=37.83-pcp-stage-header-sort"></script>
+    <script src="./js/app-04-data-auth-admin.js?v=37.83-pcp-stage-header-sort"></script>
+    <script src="./js/app-06-qr-codes.js?v=37.83-pcp-stage-header-sort"></script>
+    <script src="./js/app-05-stage-login-init.js?v=37.83-pcp-stage-header-sort"></script>
+    <script src="./i18n.js?v=38.12-portugal"></script>
   </body>
 </html>

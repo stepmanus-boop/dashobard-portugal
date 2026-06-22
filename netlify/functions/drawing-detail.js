@@ -1,10 +1,10 @@
 const { jsonResponse, requireSession } = require('./_auth');
 
 const API_BASE = process.env.SMARTSHEET_API_BASE || 'https://api.smartsheet.com/2.0';
-const TOKEN = process.env.SMARTSHEET_TOKEN || process.env.SMARTSHEET_ACCESS_TOKEN || process.env.SMARTSHEET_API_TOKEN || process.env.SMARTSHEET_BEARER_TOKEN || process.env.SMARTSHEET_PAT || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN || '';
-const DRAWING_SHEET_ID = process.env.SMARTSHEET_DRAWING_CONTROL_SHEET_ID || process.env.SMARTSHEET_DRAWING_DOCUMENTATION_SHEET_ID || '';
-const DRAWING_SHEET_URL = process.env.SMARTSHEET_DRAWING_CONTROL_SHEET_URL || process.env.SMARTSHEET_DRAWING_DOCUMENTATION_SHEET_URL || '';
-const DRAWING_SHEET_NAME = process.env.SMARTSHEET_DRAWING_CONTROL_SHEET_NAME || process.env.SMARTSHEET_DRAWING_DOCUMENTATION_SHEET_NAME || 'DRAWING DOCUMENTATION CONTROL';
+const TOKEN = process.env.SMARTSHEET_API_KEY_PT || process.env.SMARTSHEET_TOKEN_PT || process.env.SMARTSHEET_ACCESS_TOKEN_PT || process.env.SMARTSHEET_API_TOKEN_PT || process.env.SMARTSHEET_BEARER_TOKEN_PT || process.env.SMARTSHEET_PAT_PT || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN_PT || process.env.SMARTSHEET_API_KEY || process.env.SMARTSHEET_TOKEN || process.env.SMARTSHEET_ACCESS_TOKEN || process.env.SMARTSHEET_API_TOKEN || process.env.SMARTSHEET_BEARER_TOKEN || process.env.SMARTSHEET_PAT || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN || '';
+const DRAWING_SHEET_ID = process.env.SMARTSHEET_DRAWING_CONTROL_SHEET_ID_PT || process.env.SMARTSHEET_DRAWING_DOCUMENTATION_SHEET_ID_PT || process.env.SMARTSHEET_DRAWING_CONTROL_SHEET_ID || process.env.SMARTSHEET_DRAWING_DOCUMENTATION_SHEET_ID || '';
+const DRAWING_SHEET_URL = process.env.SMARTSHEET_DRAWING_CONTROL_SHEET_URL_PT || process.env.SMARTSHEET_DRAWING_DOCUMENTATION_SHEET_URL_PT || process.env.SMARTSHEET_DRAWING_CONTROL_SHEET_URL || process.env.SMARTSHEET_DRAWING_DOCUMENTATION_SHEET_URL || '';
+const DRAWING_SHEET_NAME = process.env.SMARTSHEET_DRAWING_CONTROL_SHEET_NAME_PT || process.env.SMARTSHEET_DRAWING_DOCUMENTATION_SHEET_NAME_PT || process.env.SMARTSHEET_DRAWING_CONTROL_SHEET_NAME || process.env.SMARTSHEET_DRAWING_DOCUMENTATION_SHEET_NAME || 'DRAWING DOCUMENTATION CONTROL';
 const DRAWING_CACHE_MS = Number(process.env.DRAWING_CONTROL_CACHE_MS || 10 * 60 * 1000);
 const FETCH_TIMEOUT_MS = Number(process.env.SMARTSHEET_FETCH_TIMEOUT_MS || 15000);
 const DRAWING_PAGE_SIZE = Math.max(100, Math.min(10000, Number(process.env.DRAWING_CONTROL_PAGE_SIZE || 5000)));
@@ -136,7 +136,7 @@ async function resolveDrawingSheetId() {
   }
 
   if (!selected?.id) {
-    throw new Error('Planilha Smartsheet de Drawing não encontrada. Use SMARTSHEET_DRAWING_CONTROL_SHEET_ID=2580648465590148 ou confira acesso do token.');
+    throw new Error('Planilha Smartsheet de Drawing Portugal não encontrada. Configure SMARTSHEET_DRAWING_CONTROL_SHEET_ID_PT (ou a variável genérica) e confira o acesso do token.');
   }
 
   drawingCache.sheetId = String(selected.id);
@@ -620,7 +620,7 @@ exports.handler = async (event) => {
         closest: result?.closest || [],
         initialLoadError: primaryError,
         scannedSheets,
-        hint: 'Confirme SMARTSHEET_DRAWING_CONTROL_SHEET_ID=2580648465590148 e se a TAG está na coluna Drawing Number (Rev. A).',
+        hint: 'Confirme SMARTSHEET_DRAWING_CONTROL_SHEET_ID_PT e se a TAG está na coluna Drawing Number (Rev. A).',
       });
     }
 

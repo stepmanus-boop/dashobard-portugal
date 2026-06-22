@@ -1,26 +1,14 @@
 {
-  "name": "STEP Operational Management",
-  "short_name": "STEP Management",
-  "description": "STEP operational dashboard with sector login, alerts and mobile view.",
-  "start_url": "/",
-  "scope": "/",
+  "name": "STEP Portugal - Project Dashboard",
+  "short_name": "STEP Portugal",
+  "description": "Operational project tracking dashboard for STEP Portugal.",
+  "lang": "en-US",
+  "start_url": "./",
   "display": "standalone",
-  "orientation": "portrait-primary",
   "background_color": "#041a2d",
   "theme_color": "#041a2d",
-  "lang": "en-US",
   "icons": [
-    {
-      "src": "./assets/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "./assets/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
+    { "src": "./assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./assets/icon-512.png", "sizes": "512x512", "type": "image/png" }
   ]
 }

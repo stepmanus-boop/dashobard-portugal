@@ -2,7 +2,7 @@ const { jsonResponse, requireSession } = require('./_auth');
 const { buildPayload } = require('./projects');
 
 /**
- * Endpoint rápido v32: delega para buildPayload com preferCache=1.
+ * Endpoint rápido v36.59: delega para buildPayload com preferCache=1.
  * Isso garante que o login use o cache em memória ou snapshot em disco
  * sem tocar no Smartsheet.
  */
@@ -25,7 +25,7 @@ exports.handler = async (event) => {
     // mas como elas não estão exportadas, vamos apenas delegar para o handler principal
     // se quisermos o comportamento completo, ou duplicar a lógica mínima.
     
-    // Decisão v32: Para garantir consistência total (incluindo scoping de cliente),
+    // Decisão v36.59: Para garantir consistência total (incluindo scoping de cliente),
     // vamos apenas chamar o handler de projects.js injetando preferCache=1.
     
     const projectsHandler = require('./projects').handler;

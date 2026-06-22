@@ -85,7 +85,7 @@ function inferUserOperationRegion(user = {}) {
   if (clientKey.endsWith('_BR')) return 'BR';
   if (clientKey.endsWith('_PT')) return 'PT';
 
-  // Legado sem região e sem sufixo: considera PT neste build separado.
+  // Legado sem região e sem sufixo: neste site é tratado como PT.
   return 'PT';
 }
 
@@ -97,7 +97,7 @@ function getUserRegionForConflict(user = {}) {
   if (clientKey.endsWith('_BR')) return 'BR';
   if (clientKey.endsWith('_PT')) return 'PT';
 
-  // Legado sem região é tratado como PT neste build separado.
+  // Legado sem região é tratado como PT neste site separado.
   return 'PT';
 }
 
@@ -143,7 +143,7 @@ function getLoginConflict(user, username, operationRegion, isUniversalAccess = f
 }
 
 
-function shouldStoreWithHiddenRegionSuffix(users = [], username = '', operationRegion = 'BR') {
+function shouldStoreWithHiddenRegionSuffix(users = [], username = '', operationRegion = 'PT') {
   const visible = normalizeText(stripHiddenRegionSuffix(username));
   if (!visible) return false;
   return users.some((user) => {
@@ -154,7 +154,7 @@ function shouldStoreWithHiddenRegionSuffix(users = [], username = '', operationR
   });
 }
 
-function getStoredUsernameForRegion(users = [], username = '', operationRegion = 'BR') {
+function getStoredUsernameForRegion(users = [], username = '', operationRegion = 'PT') {
   const clean = stripHiddenRegionSuffix(username).trim();
   return shouldStoreWithHiddenRegionSuffix(users, clean, operationRegion)
     ? buildHiddenRegionUsername(clean, operationRegion)
@@ -266,6 +266,7 @@ exports.handler = async (event) => {
           alertSectors: normalizeSectorList('', user.alertSectors),
           projectPmAliases: Array.isArray(user.projectPmAliases) ? user.projectPmAliases : [],
           qualityCompetencies: Array.isArray(user.qualityCompetencies) ? user.qualityCompetencies : [],
+          canViewClientPanel: user.canViewClientPanel === true,
           clientKey: user.clientKey || '',
           operationRegion: user.operationRegion || 'PT',
           siteKey: user.siteKey || user.operationRegion || 'PT',
@@ -313,6 +314,7 @@ exports.handler = async (event) => {
       const alertSectors = role !== 'sector' ? [] : normalizeSectorList('', body.alertSectors);
       const projectPmAliases = isProjectsUser(role, sector, alertSectors) ? normalizeProjectPmAliases(body.projectPmAliases) : [];
       const qualityCompetencies = isQualityUser(role, sector, alertSectors) ? normalizeQualityCompetencies(body.qualityCompetencies) : [];
+      const canViewClientPanel = body.canViewClientPanel === true;
       const operationRegion = normalizeOperationRegion(body.operationRegion || 'PT');
       const siteKey = operationRegion;
       const rawClientKey = body.clientKey || body.clientName || username;
@@ -361,6 +363,7 @@ exports.handler = async (event) => {
         alertSectors: role === 'admin' ? [] : alertSectors,
         projectPmAliases,
         qualityCompetencies,
+        canViewClientPanel,
         clientKey,
         operationRegion,
         siteKey,
@@ -423,6 +426,7 @@ exports.handler = async (event) => {
     const alertSectors = role !== 'sector' ? [] : normalizeSectorList('', body.alertSectors);
     const projectPmAliases = isProjectsUser(role, sector, alertSectors) ? normalizeProjectPmAliases(body.projectPmAliases) : [];
     const qualityCompetencies = isQualityUser(role, sector, alertSectors) ? normalizeQualityCompetencies(body.qualityCompetencies) : [];
+    const canViewClientPanel = body.canViewClientPanel === true;
     const operationRegion = normalizeOperationRegion(body.operationRegion || 'PT');
       const siteKey = operationRegion;
       const rawClientKey = body.clientKey || body.clientName || username;
@@ -467,6 +471,7 @@ exports.handler = async (event) => {
       alertSectors,
       projectPmAliases,
       qualityCompetencies,
+      canViewClientPanel,
       clientKey,
       operationRegion,
       siteKey,
@@ -488,7 +493,7 @@ function stripHiddenRegionSuffix(username = '') {
   return String(username || '').replace(/__(BR|PT)$/i, '');
 }
 
-function buildHiddenRegionUsername(username = '', region = 'BR') {
+function buildHiddenRegionUsername(username = '', region = 'PT') {
   const clean = stripHiddenRegionSuffix(username).trim();
   const reg = normalizeOperationRegion(region);
   return clean ? `${clean}__${reg}` : '';

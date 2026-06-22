@@ -1,8 +1,22 @@
 const API_BASE = process.env.SMARTSHEET_API_BASE || 'https://api.smartsheet.com/2.0';
-// Build Portugal: valida apontamentos diretamente no Tracking PT.
+// Build Portugal: leitura e escrita no Tracking PT.
 const SHEET_NAME = process.env.SMARTSHEET_SHEET_NAME_PT || process.env.SMARTSHEET_SHEET_NAME || 'Progress Tracking Sheet - Piping Fabrication PT';
-const SHEET_ID_ENV = process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID || '';
-const TOKEN = process.env.SMARTSHEET_TOKEN || process.env.SMARTSHEET_ACCESS_TOKEN || process.env.SMARTSHEET_API_TOKEN || process.env.SMARTSHEET_BEARER_TOKEN || process.env.SMARTSHEET_PAT || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN || '5pP36OjBaD1W2HWyxf6aoGxXasPvEl8gbqOmQ';
+const SHEET_ID_ENV = process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_TRACKING_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID || '';
+const TOKEN = process.env.SMARTSHEET_API_KEY_PT
+  || process.env.SMARTSHEET_TOKEN_PT
+  || process.env.SMARTSHEET_ACCESS_TOKEN_PT
+  || process.env.SMARTSHEET_API_TOKEN_PT
+  || process.env.SMARTSHEET_BEARER_TOKEN_PT
+  || process.env.SMARTSHEET_PAT_PT
+  || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN_PT
+  || process.env.SMARTSHEET_API_KEY
+  || process.env.SMARTSHEET_TOKEN
+  || process.env.SMARTSHEET_ACCESS_TOKEN
+  || process.env.SMARTSHEET_API_TOKEN
+  || process.env.SMARTSHEET_BEARER_TOKEN
+  || process.env.SMARTSHEET_PAT
+  || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN
+  || '';
 const TRACKING_SHEET_CACHE_MS = Number(process.env.TRACKING_SHEET_CACHE_MS || 2 * 60 * 1000);
 const SMARTSHEET_REQUEST_TIMEOUT_MS = Number(process.env.SMARTSHEET_REQUEST_TIMEOUT_MS || 15000);
 
@@ -400,13 +414,40 @@ function getProjectScopeRows(sheet, update) {
   return Array.from(scoped.values());
 }
 
+function getDrawingMatchScore(value, targets = []) {
+  const candidate = normalizeSpoolIdentity(value);
+  if (!candidate || !Array.isArray(targets) || !targets.length) return 0;
+  let best = 0;
+  for (const targetRaw of targets) {
+    const target = normalizeSpoolIdentity(targetRaw);
+    if (!target) continue;
+    if (candidate === target) best = Math.max(best, 100000 + candidate.length);
+    else if (candidate.includes(target)) best = Math.max(best, 70000 + target.length);
+    else if (target.includes(candidate)) best = Math.max(best, 30000 + candidate.length);
+  }
+  return best;
+}
+
 function rowsMatchingDrawing(rows, drawingColumn, targets) {
   if (!drawingColumn || !targets.length) return [];
-  return (Array.isArray(rows) ? rows : []).filter((row) => {
-    const drawing = getCellDisplay(row, drawingColumn);
-    if (!drawing) return false;
-    return targets.some((target) => compactContainsMatch(drawing, target));
-  });
+  const scored = (Array.isArray(rows) ? rows : [])
+    .map((row) => {
+      const drawing = getCellDisplay(row, drawingColumn);
+      const score = getDrawingMatchScore(drawing, targets);
+      return { row, score };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score);
+  if (!scored.length) return [];
+
+  // v37.46: evita falso positivo com linha-pai da BSP. Antes, uma busca por
+  // "BSP-26-106-53-ISO-001 SPL-01" também aceitava uma linha curta "BSP 26-106-53"
+  // como match e podia ler 0% da linha pai, mantendo a pendência no PCP mesmo
+  // quando a linha do spool já estava atualizada. Mantemos somente o melhor nível
+  // de identidade encontrado.
+  const bestScore = scored[0].score;
+  const bestBand = bestScore >= 100000 ? 100000 : bestScore >= 70000 ? 70000 : 30000;
+  return scored.filter((entry) => entry.score >= bestBand).map((entry) => entry.row);
 }
 
 function getMatchingTrackingRows(sheet, update) {
@@ -420,7 +461,20 @@ function getMatchingTrackingRows(sheet, update) {
 
   // Fallback controlado: se o parentId salvo ficou antigo ou a hierarquia mudou,
   // busca pelo Drawing no Tracking inteiro usando identidade compacta do spool/ISO.
-  return rowsMatchingDrawing(allRows, drawingColumn, targets);
+  const globalMatches = rowsMatchingDrawing(allRows, drawingColumn, targets);
+  if (globalMatches.length) return globalMatches;
+
+  // v37.45: alguns apontamentos antigos foram salvos sem spoolIso/drawing completo,
+  // mas com projectNumber/projectDisplay. Nesses casos, quando o escopo do projeto
+  // foi localizado no Tracking, usa as linhas desse projeto como última tentativa.
+  // A coluna/percentual do setor ainda será validada antes de considerar matched.
+  if (sourceRows.length && !targets.length) {
+    return sourceRows.filter((row) => {
+      if (drawingColumn && getCellDisplay(row, drawingColumn)) return true;
+      return Boolean(row?.id);
+    });
+  }
+  return [];
 }
 
 function resolveInspectionProgressColumn(sheet, row) {
@@ -646,7 +700,7 @@ function buildStageUpdatePlan(sheet, update, options = {}) {
 async function applyStageUpdatesToTracking(updates, options = {}) {
   const list = Array.isArray(updates) ? updates : [];
   if (!list.length) return { ok: false, results: [], errors: [], message: 'Nenhum apontamento informado.' };
-  const { sheetId, sheet } = await fetchTrackingSheet();
+  const { sheetId, sheet } = await fetchTrackingSheet({ force: Boolean(options.forceFreshSheet || options.forceSheet) });
   const rowChangesMap = new Map();
   const results = list.map((update) => buildStageUpdatePlan(sheet, update, { ...options, rowChangesMap }));
   const errors = results.filter((item) => !item.success).map((item) => ({ id: item.id, error: item.message }));
@@ -665,10 +719,10 @@ async function applyStageUpdatesToTracking(updates, options = {}) {
   };
 }
 
-async function inspectStageUpdatesInTracking(updates) {
+async function inspectStageUpdatesInTracking(updates, options = {}) {
   const list = Array.isArray(updates) ? updates : [];
   if (!list.length) return { ok: true, results: [], errors: [], changedRows: 0, dryRun: true };
-  return applyStageUpdatesToTracking(list, { dryRun: true });
+  return applyStageUpdatesToTracking(list, { dryRun: true, forceFreshSheet: Boolean(options.forceFreshSheet || options.forceSheet) });
 }
 
 async function listHistoryDatePendencies(updates) {

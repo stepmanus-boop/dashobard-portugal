@@ -75,13 +75,22 @@
       'Filtrar status': 'Filter status',
       'Todos os status': 'All statuses',
       'Limpar': 'Clear',
+      'Organizar etapas': 'Sort stages',
+      'Organizar somente esta lista pela Etapa Atual': 'Sort only this list by Current stage',
+      'Etapas organizadas. Clique para voltar à ordem por prazo.': 'Stages sorted. Click to return to deadline order.',
+      'Etapas organizadas': 'Stages sorted',
       'Baixar Excel': 'Download Excel',
       '-- resultado(s)': '-- result(s)',
       'Projeto': 'Project',
       'Tipo': 'Type',
       'Cliente': 'Client',
       'Unidade': 'Unit',
+      'Início planejado': 'Planned start',
       'Término planejado': 'Planned finish',
+      'Término replanejado': 'Replanned finish',
+      'On Hold fora dos indicadores': 'On Hold excluded from indicators',
+      'On Hold visíveis apenas no detalhamento': 'On Hold visible only in details',
+      'Menor progresso primeiro; On Hold visíveis apenas no detalhamento': 'Lowest progress first; On Hold visible only in details',
       'Itens': 'Items',
       'Peso soldado (kg)': 'Welded weight (kg)',
       'Semana finalizado': 'Finished week',
@@ -153,6 +162,7 @@
       'Pintura': 'Painting',
       'Qualidade': 'Quality',
       'Logística': 'Logistics',
+      'Outros': 'Other',
       'Produção': 'Production',
       'PCP': 'PCP',
       'Final Inspection QC': 'Final Inspection QC',
@@ -222,6 +232,50 @@
       'Cronograma não disponível para esta ISO.': 'Schedule not available for this ISO.',
       'Schedule não disponível para esta BSP.': 'Schedule not available for this BSP.',
       'Etapa': 'Stage',
+      'Etapas': 'Stages',
+      'Etapa atual': 'Current stage',
+      'Status atual': 'Current status',
+      'Verificando estoque': 'Checking stock',
+      'Separação de material': 'Material separation',
+      'Corte e Limpeza': 'Cutting and Cleaning',
+      'Corte e limpeza': 'Cutting and Cleaning',
+      'Pré - Montagem': 'Pre-assembly',
+      'Pré-Montagem': 'Pre-assembly',
+      'Pré Montagem': 'Pre-assembly',
+      'Pre Montagem': 'Pre-assembly',
+      'Pré - Full Welding Dimensional/3D Inspection': 'Pre-weld dimensional/3D inspection',
+      'Spool Assemble and Tack Weld': 'Spool assembly and tack weld',
+      'Spool Assemble and tack weld': 'Spool assembly and tack weld',
+      'Full Welding Execution': 'Full welding execution',
+      'Full welding execution': 'Full welding execution',
+      'Aguardando END': 'Awaiting NDE',
+      'Aguardando NDE': 'Awaiting NDE',
+      'END': 'NDE',
+      'Inspeção': 'Inspection',
+      'Inspeção Dimensional': 'Dimensional Inspection',
+      'Inspeção Dimensional Final - 3D': 'Final Dimensional Inspection - 3D',
+      'Inspeção Dimensional Inicial - 3D': 'Initial Dimensional Inspection - 3D',
+      'Final Dimensional Inpection/3D': 'Final Dimensional Inspection/3D',
+      'Final Dimensiona/3D Inspection': 'Final Dimensional/3D Inspection',
+      'TH / Teste Hidrostático': 'Hydro Test',
+      'Teste Hidrostático': 'Hydro Test',
+      'Unitização e Inspeção': 'Unitization and Inspection',
+      'Unitização e envio': 'Unitization and Shipment',
+      'Unitização': 'Unitization',
+      'Aguardando início de pintura': 'Awaiting painting start',
+      'Início de pintura': 'Painting start',
+      'Aguardando início': 'Awaiting start',
+      'Aguardando liberação para envio': 'Awaiting shipment release',
+      'Verificação final': 'Final verification',
+      'Conferência final': 'Final check',
+      'Pré - pintura': 'Pre-painting',
+      'Pré pintura': 'Pre-painting',
+      'Pintura final': 'Final painting',
+      'Em andamento': 'In progress',
+      'Em espera': 'On hold',
+      'Aguardando': 'Awaiting',
+      'Liberado': 'Released',
+      'Bloqueado': 'Blocked',
       'Prazo médio': 'Average deadline',
       'Início': 'Start',
       'Término': 'Finish',
@@ -234,6 +288,35 @@
       'concluído': 'completed',
       'fabricação': 'fabrication',
       'API do Portal do Cliente': 'Client Portal API',
+      'Pesquisar QR Code': 'Search QR Code',
+      'Rastreamento por ISO': 'ISO tracking',
+      'Pesquise ISOs já criados automaticamente pelo cache e imprima etiquetas minimalistas.': 'Search ISOs automatically created by the cache and print minimal labels.',
+      'Pesquisar ISO, BSP, Work Order, Vessel ou Tag': 'Search ISO, BSP, Work Order, Vessel or Tag',
+      'Digite o ISO completo ou parte da BSP...': 'Enter the full ISO or part of the BSP...',
+      'Pesquisar': 'Search',
+      'Imprimir selecionados': 'Print selected',
+      'Baixar selecionados': 'Download selected',
+      'Digite uma busca ou clique em pesquisar para carregar os QR Codes recentes.': 'Type a search or click search to load recent QR Codes.',
+      'Carregando QR Codes...': 'Loading QR Codes...',
+      'Carregando QR Codes recentes...': 'Loading recent QR Codes...',
+      'Nenhum QR Code encontrado. Se a BSP/ISO for nova, aguarde a atualização do cache ou clique em Atualizar agora.': 'No QR Code found. If the BSP/ISO is new, wait for the cache update or click Update now.',
+      'Nenhum QR Code encontrado para essa busca.': 'No QR Code found for this search.',
+      'QR Code automático': 'Automatic QR Code',
+      'Visualizar': 'View',
+      'Imprimir': 'Print',
+      'Baixar': 'Download',
+      'Baixar SVG': 'Download SVG',
+      'Etiquetas QR Code ISO': 'ISO QR Code Labels',
+      'Consultando QR Code no painel STEP.': 'Checking QR Code in the STEP dashboard.',
+      'QR Code inválido': 'Invalid QR Code',
+      'QR Code ativo': 'Active QR Code',
+      'QR Code não localizado': 'QR Code not found',
+      'Falha ao consultar QR Code.': 'Failed to check QR Code.',
+      'Falha ao consultar QR Codes.': 'Failed to check QR Codes.',
+      'Token do QR Code não informado.': 'QR Code token not provided.',
+      'QR Code não encontrado.': 'QR Code not found.',
+      'Falha ao gerar imagem do QR Code.': 'Failed to generate QR Code image.',
+      'Falha ao abrir rastreamento do QR Code.': 'Failed to open QR Code tracking.',
       'Copiar token': 'Copy token',
       'Carregando chaves...': 'Loading keys...',
       'Nenhuma API criada ainda.': 'No API created yet.',
@@ -251,6 +334,16 @@
       'Em atraso': 'Overdue',
       'No prazo': 'On time',
       'Em tratativa': 'Under review',
+      'Engenharia em andamento': 'Engineering in progress',
+      'Suprimento em andamento': 'Supply in progress',
+      'Produção em andamento': 'Production in progress',
+      'Qualidade em andamento': 'Quality in progress',
+      'Pintura em andamento': 'Painting in progress',
+      'Logística em andamento': 'Logistics in progress',
+      'Caldeiraria em andamento': 'Boilermaking in progress',
+      'Solda em andamento': 'Welding in progress',
+      'Inspeção em andamento': 'Inspection in progress',
+      'TH em andamento': 'Hydro Test in progress',
       'On Hold': 'On Hold',
       'Aguardando envio': 'Awaiting shipment',
       'Preparado para envio': 'Prepared for shipment',
@@ -374,143 +467,6 @@
       'Prévia e ajuste da logo do cliente': 'Client logo preview and adjustment',
       'URL da logo ou ./assets/client-logos/prio.png': 'Logo URL or ./assets/client-logos/prio.png',
       'Ex.: Projeto já enviado': 'Ex.: Project already shipped',
-      'STEP Gerência': 'STEP Management',
-      'Clique para abrir o total por cliente, unidade e BSP': 'Click to open total by client, unit and BSP',
-      'Clique para abrir os projetos iniciados por cliente': 'Click to open started projects by client',
-      'Clique para abrir os projetos não iniciados por cliente': 'Click to open not started projects by client',
-      'Clique para abrir os projetos em On Hold por cliente': 'Click to open projects on hold by client',
-      'Clique para abrir os projetos em produção por cliente': 'Click to open projects in production by client',
-      'Clique para abrir os projetos em qualidade por cliente': 'Click to open projects in quality by client',
-      'Clique para abrir os projetos em pintura por cliente': 'Click to open projects in painting by client',
-      'Clique para abrir os projetos preparados para envio por cliente': 'Click to open projects prepared for shipment by client',
-      'Clique para abrir o peso programado por cliente e BSP': 'Click to open planned weight by client and BSP',
-      'Clique para abrir o peso soldado por cliente e BSP': 'Click to open welded weight by client and BSP',
-      'Clique para abrir o peso pendente de solda por cliente e BSP': 'Click to open pending welding weight by client and BSP',
-      'Clique para abrir a área operacional por cliente e BSP': 'Click to open operational area by client and BSP',
-      'FORTE=cole aqui a URL/base64 da imagem&#10;FRADE=cole aqui a URL/base64 da imagem': 'FORTE=paste the image URL/base64 here&#10;FRADE=paste the image URL/base64 here',
-      'Buscar por título, mensagem, setor, usuário ou data': 'Search by title, message, sector, user or date',
-      'Clique em um cliente para visualizar as unidades/obras. Depois clique em uma unidade para listar as BSPs.': 'Click a client to view units/works. Then click a unit to list BSPs.',
-      'Este é o painel Portugal. Usuários criados aqui ficam sempre vinculados ao ambiente PT.': 'This is the Portugal dashboard. Users created here are always linked to the PT environment.',
-      'Quando marcado, o usuário poderá abrir a visão executiva do cliente nas BSPs. A edição de datas/informações continua restrita ao Admin ou ao PM vinculado.': 'When checked, the user can open the client executive view in BSPs. Date/information editing remains restricted to Admin or the linked PM.',
-      'Opcional. Você pode colar uma URL/caminho ou importar uma imagem local. Ao importar, ajuste a prévia e clique em “Aplicar ajuste”.': 'Optional. You can paste a URL/path or import a local image. When importing, adjust the preview and click “Apply adjustment”.',
-      'A prévia usa o mesmo formato do Portal do Cliente. Ajuste até preencher o quadro sem excesso de branco.': 'The preview uses the same format as the Client Portal. Adjust it until it fills the frame without excess white space.',
-      'Preencha uma imagem para cada Vessel/Unidade. O nome precisa ser igual ao nome que aparece no card.': 'Enter one image for each Vessel/Unit. The name must match the name shown on the card.',
-      'Selecione os nomes como aparecem na coluna PM do Tracking. A lista é montada automaticamente pelos projetos carregados.': 'Select the names as they appear in the Tracking PM column. The list is built automatically from loaded projects.',
-      'Se nada for marcado, o usuário de Qualidade mantém acesso a todas as competências. Marcando opções, ele verá somente as demandas correspondentes.': 'If nothing is checked, the Quality user keeps access to all competencies. When options are checked, they will see only the corresponding demands.',
-      'Nenhum alerta manual carregado.': 'No manual alert loaded.',
-      'Prévia da logo do cliente': 'Client logo preview',
-      'No iPhone/iPad, abra no Safari, toque em Compartilhar e depois em “Adicionar à Tela de Início”.': 'On iPhone/iPad, open in Safari, tap Share, then “Add to Home Screen”.',
-      'Falha ao registrar service worker.': 'Failed to register service worker.',
-      'Falha ao exibir notificação.': 'Failed to display notification.',
-      'Você recebeu um novo alerta operacional.': 'You received a new operational alert.',
-      'Abrir sinalização': 'Open flag',
-      'Prazo em alerta': 'Deadline alert',
-      'Abrir alertas': 'Open alerts',
-      'Abrir apontamentos': 'Open stage updates',
-      'Você recebeu um novo alerta.': 'You received a new alert.',
-      'Revisão de P.O': 'PO review',
-      'Revisão de PO': 'PO review',
-      'Revisão PO': 'PO review',
-      'Aguardando liberação para envio': 'Waiting for release for shipment',
-      'Aguardando liberacao para envio': 'Waiting for release for shipment',
-      'Aguardando liberação p/ envio': 'Waiting for release for shipment',
-      'Aguardando liberacao p envio': 'Waiting for release for shipment',
-      'Aguardando liberação envio': 'Waiting for release for shipment',
-      'Aguardando liberacao envio': 'Waiting for release for shipment',
-      'Sinalizações': 'Flags',
-      'Sinalizações do projeto': 'Project flags',
-      'Todos os projetos': 'All projects',
-      'Painel Individual da Obra': 'Work Individual Dashboard',
-      'Editar início/fim da ISO': 'Edit ISO start/finish',
-      'Início manual da ISO': 'Manual ISO start',
-      'Término manual da ISO': 'Manual ISO finish',
-      'Data de início da ISO': 'ISO start date',
-      'Data de término da ISO': 'ISO finish date',
-      'Salvar datas da ISO': 'Save ISO dates',
-      'Início desenho': 'Drawing start',
-      'Quantidade/Peso': 'Quantity/Weight',
-      'Revisão A': 'Revision A',
-      'Status da aprovação': 'Approval status',
-      'Approved / Finalizado': 'Approved / Completed',
-      'API de Drawing retornou resposta vazia. Status HTTP:': 'Drawing API returned an empty response. HTTP status:',
-      'API de Drawing retornou resposta não JSON. Status HTTP:': 'Drawing API returned a non-JSON response. HTTP status:',
-      'Próximos encontrados:': 'Closest matches found:',
-      'Detalhamento não encontrado.': 'Details not found.',
-      'Não foi possível carregar o detalhamento de Drawing para': 'Could not load Drawing details for',
-      'Nenhuma tag detalhada encontrada para esta BSP.': 'No detailed tag found for this BSP.',
-      'O navegador bloqueou a nova aba. Libere pop-ups para abrir o painel individual.': 'The browser blocked the new tab. Allow pop-ups to open the individual dashboard.',
-      'Fab. Início': 'Fab. Start',
-      'Data de Envio': 'Shipment Date',
-      'Início planejado': 'Planned start',
-      'Pré-fabricação | avanço inicial': 'Pre-fabrication | initial progress',
-      'Pré-fabricação | avanço intermediário': 'Pre-fabrication | intermediate progress',
-      'Não': 'No',
-      'Data Replanejada': 'Replanned Date',
-      'Extensão de prazo': 'Deadline extension',
-      'Hoje': 'Today',
-      'Atraso': 'Delay',
-      'Início do desvio': 'Deviation start',
-      'Pintura ainda não iniciada após avanço relevante da fabricação.': 'Painting has not started yet after relevant fabrication progress.',
-      'Término previsto': 'Expected finish',
-      'com progresso abaixo de 80%.': 'with progress below 80%.',
-      'Sem ponto crítico automático identificado neste momento.': 'No automatic critical point identified at this time.',
-      'Em andamento': 'In progress',
-      'Report não disponível para esta BSP.': 'Report not available for this BSP.',
-      'Falha ao salvar ajustes.': 'Failed to save adjustments.',
-      'Ajuste salvo, mas a API não retornou os dados atualizados. Atualize a tela para conferir.': 'Adjustment saved, but the API did not return updated data. Refresh the screen to check.',
-      'Falha ao remover ajuste.': 'Failed to remove adjustment.',
-      'A importação de imagem é restrita ao administrador e ao PM responsável pela BSP.': 'Image import is restricted to the administrator and the PM responsible for the BSP.',
-      'Carteira sem ponto crítico automático identificado neste momento.': 'Portfolio has no automatic critical point identified at this time.',
-      'Resumo BSPs': 'BSP summary',
-      'Unidade consolidada': 'Consolidated unit',
-      'Carteira consolidada': 'Consolidated portfolio',
-      'Escopo do relatório': 'Report scope',
-      'Timeline macro': 'Macro timeline',
-      'Resumo das etapas da unidade': 'Unit stage summary',
-      'Resumo das etapas da carteira': 'Portfolio stage summary',
-      'Editar datas / informações': 'Edit dates / information',
-      'Imagens': 'Images',
-      'Arquivo': 'File',
-      'Ação': 'Action',
-      'Selecione uma ou mais imagens. O sistema comprime automaticamente antes de enviar para manter o painel leve.': 'Select one or more images. The system automatically compresses them before upload to keep the dashboard light.',
-      'Integração': 'Integration',
-      'Nome da integração': 'Integration name',
-      'Smartsheet Tracking': 'Smartsheet Tracking',
-      'Exportado em': 'Exported at',
-      'Baixar o detalhamento': 'Download the details',
-      'Urgência': 'Urgency',
-      'Sinalização': 'Flag',
-      'Marcar como resolvida': 'Mark as resolved',
-      'Competências da Qualidade': 'Quality competencies',
-      'Último login': 'Last login',
-      'Última visualização': 'Last view',
-      'Limpar rascunhos': 'Clear drafts',
-      'Corrigir selecionadas': 'Fix selected',
-      'Apontamentos da etapa': 'Stage updates',
-      'Pendências não processadas': 'Unprocessed pending items',
-      'Observação opcional': 'Optional note',
-      'Parâmetro projectId ausente.': 'Missing projectId parameter.',
-      'Erro ao carregar imagens': 'Error loading images',
-      'Falha ao carregar as imagens.': 'Failed to load images.',
-      'Ver imagem': 'View image',
-      'Imagem': 'Image',
-      'Carregando dados…': 'Loading data…',
-      'Carregando dados...': 'Loading data...',
-      'Nenhum projeto em desenvolvimento foi encontrado.': 'No project under development was found.',
-      'Falha ao carregar os dados.': 'Failed to load data.',
-      'Erro ao carregar dados': 'Error loading data',
-      'Abra /api/client-under-dev?debug=1 para ver o mapeamento das colunas retornado pela API.': 'Open /api/client-under-dev?debug=1 to see the column mapping returned by the API.',
-      'Buscar Vessel, Work Order, ID Repair, Tag Number, SOB, Description ou Status': 'Search Vessel, Work Order, ID Repair, Tag Number, SOB, Description or Status',
-      'Projetos em Desenvolvimento – Yinson': 'Projects Under Development – Yinson',
-      'Buscar': 'Search',
-      'IMAGEM': 'IMAGE',
-      'Você recebeu uma nova notificação.': 'You received a new notification.',
-      'Você recebeu uma nova notificação': 'You received a new notification',
-      'Método não permitido.': 'Method not allowed.',
-      'Falha ao sincronizar cache.': 'Failed to sync cache.',
-      'BSP não encontrada no escopo do usuário.': 'BSP not found in the user scope.',
-      'Uma nova sinalização foi enviada para validação.': 'A new flag was sent for validation.',
-      'Um novo apontamento foi enviado e aguarda validação do PCP.': 'A new stage update was sent and is awaiting PCP validation.',
 
       'Portal do Cliente': 'Client Portal',
       'Demandas filtradas por empresa': 'Items filtered by company',
@@ -568,11 +524,156 @@
       'Informações do cliente': 'Client information',
       'Dados do cliente': 'Client data',
       'Última atualização': 'Last update',
+      'Última atualização do cache': 'Last cache update',
+      'agora mesmo': 'just now',
+      'aguardando rotina de atualização': 'waiting for refresh routine',
+      'cache mantido; tentativa manual não concluída': 'cache kept; manual attempt not completed',
+      'sem base salva ainda': 'no saved base yet',
+      'Cache:': 'Cache:',
+      'Cache': 'Cache',
+      'Clique uma vez para selecionar; dê 2 cliques para abrir a visão executiva': 'Click once to select; double-click to open executive view',
+      '2 cliques: gráficos / PDF da unidade': 'Double-click: unit charts / PDF',
+      'Clique uma vez para listar as BSPs; dê 2 cliques para abrir os gráficos da unidade': 'Click once to list BSPs; double-click to open unit charts',
+      'Clique uma vez para listar as BSPs; dê 2 cliques para abrir os gráficos e o PDF da unidade': 'Click once to list BSPs; double-click to open unit charts and PDF',
       'Atualização manual': 'Manual update',
       'Limpar filtros': 'Clear filters',
       'Sem resultados para a busca.': 'No results for the search.',
       'Clique uma vez para listar as BSPs; dê 2 cliques para abrir os gráficos e o PDF da unidade.': 'Click once to list the BSPs; double-click to open the unit charts and the unit PDF.',
-      'Projeto já enviado': 'Project already shipped'
+      'Projeto já enviado': 'Project already shipped',
+
+      // Portugal-specific translations preserved from v38.10
+      'STEP Gerência': 'STEP Management',
+      'Clique para abrir o total por cliente, unidade e BSP': 'Click to open total by client, unit and BSP',
+      'Clique para abrir os projetos iniciados por cliente': 'Click to open started projects by client',
+      'Clique para abrir os projetos não iniciados por cliente': 'Click to open not started projects by client',
+      'Clique para abrir os projetos em On Hold por cliente': 'Click to open projects on hold by client',
+      'Clique para abrir os projetos em produção por cliente': 'Click to open projects in production by client',
+      'Clique para abrir os projetos em qualidade por cliente': 'Click to open projects in quality by client',
+      'Clique para abrir os projetos em pintura por cliente': 'Click to open projects in painting by client',
+      'Clique para abrir os projetos preparados para envio por cliente': 'Click to open projects prepared for shipment by client',
+      'Clique para abrir o peso programado por cliente e BSP': 'Click to open planned weight by client and BSP',
+      'Clique para abrir o peso soldado por cliente e BSP': 'Click to open welded weight by client and BSP',
+      'Clique para abrir o peso pendente de solda por cliente e BSP': 'Click to open pending welding weight by client and BSP',
+      'Clique para abrir a área operacional por cliente e BSP': 'Click to open operational area by client and BSP',
+      'FORTE=cole aqui a URL/base64 da imagem&#10;FRADE=cole aqui a URL/base64 da imagem': 'FORTE=paste the image URL/base64 here&#10;FRADE=paste the image URL/base64 here',
+      'Buscar por título, mensagem, setor, usuário ou data': 'Search by title, message, sector, user or date',
+      'Clique em um cliente para visualizar as unidades/obras. Depois clique em uma unidade para listar as BSPs.': 'Click a client to view units/works. Then click a unit to list BSPs.',
+      'Este é o painel Portugal. Usuários criados aqui ficam sempre vinculados ao ambiente PT.': 'This is the Portugal dashboard. Users created here are always linked to the PT environment.',
+      'Quando marcado, o usuário poderá abrir a visão executiva do cliente nas BSPs. A edição de datas/informações continua restrita ao Admin ou ao PM vinculado.': 'When checked, the user can open the client executive view in BSPs. Date/information editing remains restricted to Admin or the linked PM.',
+      'Opcional. Você pode colar uma URL/caminho ou importar uma imagem local. Ao importar, ajuste a prévia e clique em “Aplicar ajuste”.': 'Optional. You can paste a URL/path or import a local image. When importing, adjust the preview and click “Apply adjustment”.',
+      'A prévia usa o mesmo formato do Portal do Cliente. Ajuste até preencher o quadro sem excesso de branco.': 'The preview uses the same format as the Client Portal. Adjust it until it fills the frame without excess white space.',
+      'Preencha uma imagem para cada Vessel/Unidade. O nome precisa ser igual ao nome que aparece no card.': 'Enter one image for each Vessel/Unit. The name must match the name shown on the card.',
+      'Selecione os nomes como aparecem na coluna PM do Tracking. A lista é montada automaticamente pelos projetos carregados.': 'Select the names as they appear in the Tracking PM column. The list is built automatically from loaded projects.',
+      'Se nada for marcado, o usuário de Qualidade mantém acesso a todas as competências. Marcando opções, ele verá somente as demandas correspondentes.': 'If nothing is checked, the Quality user keeps access to all competencies. When options are checked, they will see only the corresponding demands.',
+      'Nenhum alerta manual carregado.': 'No manual alert loaded.',
+      'Prévia da logo do cliente': 'Client logo preview',
+      'No iPhone/iPad, abra no Safari, toque em Compartilhar e depois em “Adicionar à Tela de Início”.': 'On iPhone/iPad, open in Safari, tap Share, then “Add to Home Screen”.',
+      'Falha ao registrar service worker.': 'Failed to register service worker.',
+      'Falha ao exibir notificação.': 'Failed to display notification.',
+      'Você recebeu um novo alerta operacional.': 'You received a new operational alert.',
+      'Abrir sinalização': 'Open flag',
+      'Prazo em alerta': 'Deadline alert',
+      'Abrir alertas': 'Open alerts',
+      'Abrir apontamentos': 'Open stage updates',
+      'Você recebeu um novo alerta.': 'You received a new alert.',
+      'Revisão de P.O': 'PO review',
+      'Revisão de PO': 'PO review',
+      'Revisão PO': 'PO review',
+      'Aguardando liberacao para envio': 'Waiting for release for shipment',
+      'Aguardando liberação p/ envio': 'Waiting for release for shipment',
+      'Aguardando liberacao p envio': 'Waiting for release for shipment',
+      'Aguardando liberação envio': 'Waiting for release for shipment',
+      'Aguardando liberacao envio': 'Waiting for release for shipment',
+      'Sinalizações': 'Flags',
+      'Sinalizações do projeto': 'Project flags',
+      'Todos os projetos': 'All projects',
+      'Painel Individual da Obra': 'Work Individual Dashboard',
+      'Editar início/fim da ISO': 'Edit ISO start/finish',
+      'Início manual da ISO': 'Manual ISO start',
+      'Término manual da ISO': 'Manual ISO finish',
+      'Data de início da ISO': 'ISO start date',
+      'Data de término da ISO': 'ISO finish date',
+      'Salvar datas da ISO': 'Save ISO dates',
+      'Início desenho': 'Drawing start',
+      'Quantidade/Peso': 'Quantity/Weight',
+      'Revisão A': 'Revision A',
+      'Status da aprovação': 'Approval status',
+      'Approved / Finalizado': 'Approved / Completed',
+      'API de Drawing retornou resposta vazia. Status HTTP:': 'Drawing API returned an empty response. HTTP status:',
+      'API de Drawing retornou resposta não JSON. Status HTTP:': 'Drawing API returned a non-JSON response. HTTP status:',
+      'Próximos encontrados:': 'Closest matches found:',
+      'Detalhamento não encontrado.': 'Details not found.',
+      'Não foi possível carregar o detalhamento de Drawing para': 'Could not load Drawing details for',
+      'Nenhuma tag detalhada encontrada para esta BSP.': 'No detailed tag found for this BSP.',
+      'O navegador bloqueou a nova aba. Libere pop-ups para abrir o painel individual.': 'The browser blocked the new tab. Allow pop-ups to open the individual dashboard.',
+      'Fab. Início': 'Fab. Start',
+      'Data de Envio': 'Shipment Date',
+      'Pré-fabricação | avanço inicial': 'Pre-fabrication | initial progress',
+      'Pré-fabricação | avanço intermediário': 'Pre-fabrication | intermediate progress',
+      'Não': 'No',
+      'Data Replanejada': 'Replanned Date',
+      'Extensão de prazo': 'Deadline extension',
+      'Hoje': 'Today',
+      'Atraso': 'Delay',
+      'Início do desvio': 'Deviation start',
+      'Pintura ainda não iniciada após avanço relevante da fabricação.': 'Painting has not started yet after relevant fabrication progress.',
+      'Término previsto': 'Expected finish',
+      'com progresso abaixo de 80%.': 'with progress below 80%.',
+      'Sem ponto crítico automático identificado neste momento.': 'No automatic critical point identified at this time.',
+      'Report não disponível para esta BSP.': 'Report not available for this BSP.',
+      'Falha ao salvar ajustes.': 'Failed to save adjustments.',
+      'Ajuste salvo, mas a API não retornou os dados atualizados. Atualize a tela para conferir.': 'Adjustment saved, but the API did not return updated data. Refresh the screen to check.',
+      'Falha ao remover ajuste.': 'Failed to remove adjustment.',
+      'A importação de imagem é restrita ao administrador e ao PM responsável pela BSP.': 'Image import is restricted to the administrator and the PM responsible for the BSP.',
+      'Carteira sem ponto crítico automático identificado neste momento.': 'Portfolio has no automatic critical point identified at this time.',
+      'Resumo BSPs': 'BSP summary',
+      'Unidade consolidada': 'Consolidated unit',
+      'Carteira consolidada': 'Consolidated portfolio',
+      'Escopo do relatório': 'Report scope',
+      'Timeline macro': 'Macro timeline',
+      'Resumo das etapas da unidade': 'Unit stage summary',
+      'Resumo das etapas da carteira': 'Portfolio stage summary',
+      'Editar datas / informações': 'Edit dates / information',
+      'Imagens': 'Images',
+      'Arquivo': 'File',
+      'Ação': 'Action',
+      'Selecione uma ou mais imagens. O sistema comprime automaticamente antes de enviar para manter o painel leve.': 'Select one or more images. The system automatically compresses them before upload to keep the dashboard light.',
+      'Integração': 'Integration',
+      'Nome da integração': 'Integration name',
+      'Smartsheet Tracking': 'Smartsheet Tracking',
+      'Exportado em': 'Exported at',
+      'Baixar o detalhamento': 'Download the details',
+      'Urgência': 'Urgency',
+      'Sinalização': 'Flag',
+      'Marcar como resolvida': 'Mark as resolved',
+      'Último login': 'Last login',
+      'Última visualização': 'Last view',
+      'Limpar rascunhos': 'Clear drafts',
+      'Corrigir selecionadas': 'Fix selected',
+      'Apontamentos da etapa': 'Stage updates',
+      'Pendências não processadas': 'Unprocessed pending items',
+      'Parâmetro projectId ausente.': 'Missing projectId parameter.',
+      'Erro ao carregar imagens': 'Error loading images',
+      'Falha ao carregar as imagens.': 'Failed to load images.',
+      'Ver imagem': 'View image',
+      'Imagem': 'Image',
+      'Carregando dados…': 'Loading data…',
+      'Carregando dados...': 'Loading data...',
+      'Nenhum projeto em desenvolvimento foi encontrado.': 'No project under development was found.',
+      'Falha ao carregar os dados.': 'Failed to load data.',
+      'Erro ao carregar dados': 'Error loading data',
+      'Abra /api/client-under-dev?debug=1 para ver o mapeamento das colunas retornado pela API.': 'Open /api/client-under-dev?debug=1 to see the column mapping returned by the API.',
+      'Buscar Vessel, Work Order, ID Repair, Tag Number, SOB, Description ou Status': 'Search Vessel, Work Order, ID Repair, Tag Number, SOB, Description or Status',
+      'Projetos em Desenvolvimento – Yinson': 'Projects Under Development – Yinson',
+      'Buscar': 'Search',
+      'IMAGEM': 'IMAGE',
+      'Você recebeu uma nova notificação': 'You received a new notification',
+      'Método não permitido.': 'Method not allowed.',
+      'Falha ao sincronizar cache.': 'Failed to sync cache.',
+      'BSP não encontrada no escopo do usuário.': 'BSP not found in the user scope.',
+      'Uma nova sinalização foi enviada para validação.': 'A new flag was sent for validation.',
+      'Um novo apontamento foi enviado e aguarda validação do PCP.': 'A new stage update was sent and is awaiting PCP validation.',
+
     },
     'es-ES': {
       'Idioma': 'Idioma',
@@ -636,13 +737,22 @@
       'Filtrar status': 'Filtrar estado',
       'Todos os status': 'Todos los estados',
       'Limpar': 'Limpiar',
+      'Organizar etapas': 'Ordenar etapas',
+      'Organizar somente esta lista pela Etapa Atual': 'Ordenar solamente esta lista por Etapa actual',
+      'Etapas organizadas. Clique para voltar à ordem por prazo.': 'Etapas ordenadas. Haga clic para volver al orden por plazo.',
+      'Etapas organizadas': 'Etapas ordenadas',
       'Baixar Excel': 'Descargar Excel',
       '-- resultado(s)': '-- resultado(s)',
       'Projeto': 'Proyecto',
       'Tipo': 'Tipo',
       'Cliente': 'Cliente',
       'Unidade': 'Unidad',
+      'Início planejado': 'Inicio planificado',
       'Término planejado': 'Fin planificado',
+      'Término replanejado': 'Fin replanificado',
+      'On Hold fora dos indicadores': 'On Hold fuera de los indicadores',
+      'On Hold visíveis apenas no detalhamento': 'On Hold visible solo en el detalle',
+      'Menor progresso primeiro; On Hold visíveis apenas no detalhamento': 'Menor progreso primero; On Hold visible solo en el detalle',
       'Itens': 'Ítems',
       'Peso soldado (kg)': 'Peso soldado (kg)',
       'Semana finalizado': 'Semana finalizada',
@@ -712,6 +822,7 @@
       'Pintura': 'Pintura',
       'Qualidade': 'Calidad',
       'Logística': 'Logística',
+      'Outros': 'Otros',
       'Produção': 'Producción',
       'PCP': 'PCP',
       'Final Inspection QC': 'Inspección final QC',
@@ -809,6 +920,16 @@
       'Em atraso': 'Atrasado',
       'No prazo': 'A tiempo',
       'Em tratativa': 'En tratativa',
+      'Engenharia em andamento': 'Ingeniería en curso',
+      'Suprimento em andamento': 'Suministro en curso',
+      'Produção em andamento': 'Producción en curso',
+      'Qualidade em andamento': 'Calidad en curso',
+      'Pintura em andamento': 'Pintura en curso',
+      'Logística em andamento': 'Logística en curso',
+      'Caldeiraria em andamento': 'Calderería en curso',
+      'Solda em andamento': 'Soldadura en curso',
+      'Inspeção em andamento': 'Inspección en curso',
+      'TH em andamento': 'Prueba hidráulica en curso',
       'On Hold': 'En espera',
       'Aguardando envio': 'Aguardando envío',
       'Preparado para envio': 'Preparado para envío',
@@ -1126,6 +1247,32 @@
     const normalized = normalizeText(text);
     const en = lang === 'en-US';
 
+    let mDuration = normalized.match(/^agora mesmo$/i);
+    if (mDuration) return en ? 'just now' : 'ahora mismo';
+
+    mDuration = normalized.match(/^há\s+(\d+)\s+min$/i);
+    if (mDuration) return en ? `${mDuration[1]} min ago` : `hace ${mDuration[1]} min`;
+
+    mDuration = normalized.match(/^há\s+(\d+)h(?:\s*(\d+)min)?$/i);
+    if (mDuration) return en ? `${mDuration[1]}h${mDuration[2] ? ` ${mDuration[2]}min` : ''} ago` : `hace ${mDuration[1]}h${mDuration[2] ? ` ${mDuration[2]}min` : ''}`;
+
+    mDuration = normalized.match(/^há\s+(\d+)d(?:\s*(\d+)h)?$/i);
+    if (mDuration) return en ? `${mDuration[1]}d${mDuration[2] ? ` ${mDuration[2]}h` : ''} ago` : `hace ${mDuration[1]}d${mDuration[2] ? ` ${mDuration[2]}h` : ''}`;
+
+    let mCache = normalized.match(/^Última atualização do cache:\s*(.+?)(?:\s*•\s*(agora mesmo|há\s+\d+\s+min|há\s+\d+h(?:\s*\d+min)?|há\s+\d+d(?:\s*\d+h)?))?(?:\s*•\s*aguardando rotina de atualização)?$/i);
+    if (mCache) {
+      const age = mCache[2] ? translateText(mCache[2], lang) : '';
+      const stale = /aguardando rotina de atualização/i.test(normalized);
+      const suffix = [age, stale ? (en ? 'waiting for refresh routine' : 'esperando rutina de actualización') : ''].filter(Boolean).join(' • ');
+      return `${en ? 'Last cache update' : 'Última actualización de caché'}: ${mCache[1]}${suffix ? ' • ' + suffix : ''}`;
+    }
+
+    let mQr = normalized.match(/^Pesquisando “(.+?)”\.\.\.$/i);
+    if (mQr) return en ? `Searching “${mQr[1]}”...` : `Buscando “${mQr[1]}”...`;
+
+    mQr = normalized.match(/^(\d+) QR Code\(s\) encontrado\(s\)\. Selecione para imprimir ou baixar\.$/i);
+    if (mQr) return en ? `${mQr[1]} QR Code(s) found. Select to print or download.` : `${mQr[1]} QR Code(s) encontrado(s). Seleccione para imprimir o descargar.`;
+
     let m = normalized.match(/^Realizado\s+(.+?)\s+contra\s+planejado\s+(.+?):\s*desvio\s+de\s+(.+?)\.?$/i);
     if (m) return en ? `Actual ${m[1]} versus planned ${m[2]}: deviation of ${m[3]}.` : `Realizado ${m[1]} contra planificado ${m[2]}: desvío de ${m[3]}.`;
 
@@ -1141,14 +1288,55 @@
     m = normalized.match(/^(.+?)\s+soldado\s+•\s+(.+?)$/i);
     if (m) return en ? `${m[1]} welded • ${m[2]}` : `${m[1]} soldado • ${m[2]}`;
 
+    m = normalized.match(/^Início planejado:\s*(.+)$/i);
+    if (m) return en ? `Planned start: ${m[1]}` : `Inicio planificado: ${m[1]}`;
+
     m = normalized.match(/^Término planejado:\s*(.+)$/i);
     if (m) return en ? `Planned finish: ${m[1]}` : `Fin planificado: ${m[1]}`;
 
     m = normalized.match(/^Término replanejado:\s*(.+)$/i);
     if (m) return en ? `Replanned finish: ${m[1]}` : `Fin replanificado: ${m[1]}`;
 
+    m = normalized.match(/^Carteira do cliente\s*•\s*(\d+) BSP\(s\) ativas(?:\s*•\s*(\d+) On Hold fora dos indicadores)?$/i);
+    if (m) {
+      const title = en ? 'Client portfolio' : 'Cartera del cliente';
+      const active = en ? `${m[1]} active BSP(s)` : `${m[1]} BSP(s) activas`;
+      const hold = m[2] ? (en ? `${m[2]} On Hold excluded from indicators` : `${m[2]} On Hold fuera de los indicadores`) : '';
+      return [title, active, hold].filter(Boolean).join(' • ');
+    }
+
+    m = normalized.match(/^(.+?)\s*•\s*Unidade\s+(.+?)\s*•\s*(\d+) BSP\(s\) ativas(?:\s*•\s*(\d+) On Hold fora dos indicadores)?$/i);
+    if (m) {
+      const unit = en ? `Unit ${m[2]}` : `Unidad ${m[2]}`;
+      const active = en ? `${m[3]} active BSP(s)` : `${m[3]} BSP(s) activas`;
+      const hold = m[4] ? (en ? `${m[4]} On Hold excluded from indicators` : `${m[4]} On Hold fuera de los indicadores`) : '';
+      return [m[1], unit, active, hold].filter(Boolean).join(' • ');
+    }
+
+    m = normalized.match(/^(\d+) BSP\(s\) ativas(?:\s*•\s*(\d+) On Hold fora dos indicadores)?$/i);
+    if (m) {
+      const active = en ? `${m[1]} active BSP(s)` : `${m[1]} BSP(s) activas`;
+      const hold = m[2] ? (en ? `${m[2]} On Hold excluded from indicators` : `${m[2]} On Hold fuera de los indicadores`) : '';
+      return [active, hold].filter(Boolean).join(' • ');
+    }
+
+    m = normalized.match(/^(\d+) On Hold fora dos indicadores$/i);
+    if (m) return en ? `${m[1]} On Hold excluded from indicators` : `${m[1]} On Hold fuera de los indicadores`;
+
     m = normalized.match(/^(\d+) resultado\(s\)$/i);
     if (m) return en ? `${m[1]} result(s)` : `${m[1]} resultado(s)`;
+
+    m = normalized.match(/^(.+?) projeto\(s\) na tela$/i);
+    if (m) return en ? `${m[1]} project(s) on screen` : `${m[1]} proyecto(s) en pantalla`;
+
+    m = normalized.match(/^(.+?) imagem\(ns\) disponível\(is\)$/i);
+    if (m) return en ? `${m[1]} image(s) available` : `${m[1]} imagen(es) disponible(s)`;
+
+    m = normalized.match(/^(.+?) tag\(s\) • (.+?) kg programado$/i);
+    if (m) return en ? `${m[1]} tag(s) • ${m[2]} kg planned` : `${m[1]} tag(s) • ${m[2]} kg planificado`;
+
+    m = normalized.match(/^(.+?) kg soldado • (.+?)$/i);
+    if (m) return en ? `${m[1]} kg welded • ${m[2]}` : `${m[1]} kg soldado • ${m[2]}`;
 
     m = normalized.match(/^(\d+) online • (\d+) usuário\(s\)$/i);
     if (m) return en ? `${m[1]} online • ${m[2]} user(s)` : `${m[1]} en línea • ${m[2]} usuario(s)`;
@@ -1420,23 +1608,7 @@
     });
   }
 
-
-  let nativeDialogsPatched = false;
-  function patchNativeDialogs() {
-    if (nativeDialogsPatched) return;
-    nativeDialogsPatched = true;
-    const nativeAlert = window.alert?.bind(window);
-    const nativeConfirm = window.confirm?.bind(window);
-    if (nativeAlert) {
-      window.alert = (message) => nativeAlert(translateText(String(message ?? ''), currentLang));
-    }
-    if (nativeConfirm) {
-      window.confirm = (message) => nativeConfirm(translateText(String(message ?? ''), currentLang));
-    }
-  }
-
   function init() {
-    patchNativeDialogs();
     saveLanguage(currentLang);
     createSwitcher();
     applyTranslations(document.body);

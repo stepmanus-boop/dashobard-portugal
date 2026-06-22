@@ -23,6 +23,17 @@ function getToken() {
     || '';
 }
 
+function json(statusCode, payload) {
+  return {
+    statusCode,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+    },
+    body: JSON.stringify(payload),
+  };
+}
+
 function unique(values) {
   return Array.from(new Set((values || []).flatMap((item) => String(item || '').split(',')).map((v) => v.trim()).filter(Boolean)));
 }
@@ -32,14 +43,16 @@ function getCandidateSheetIds(event) {
   return unique([
     qs.sheetId,
     qs.sheetIds,
+    process.env.SMARTSHEET_YINSON_UNDER_DEV_SHEET_ID_PT,
+    process.env.SMARTSHEET_UNDER_DEV_SHEET_ID_PT,
+    process.env.SMARTSHEET_CLIENT_UNDER_DEV_SHEET_ID_PT,
+    process.env.SMARTSHEET_YINSON_SHEET_ID_PT,
     process.env.SMARTSHEET_YINSON_UNDER_DEV_SHEET_ID,
     process.env.SMARTSHEET_UNDER_DEV_SHEET_ID,
     process.env.SMARTSHEET_CLIENT_UNDER_DEV_SHEET_ID,
     process.env.SMARTSHEET_YINSON_SHEET_ID,
     process.env.SMARTSHEET_SHEET_ID_YINSON,
     process.env.SMARTSHEET_SHEET_IDS_LIST,
-    process.env.SMARTSHEET_SHEET_ID_PT,
-    process.env.SMARTSHEET_TRACKING_SHEET_ID_PT,
     process.env.SMARTSHEET_SHEET_ID_PT,
     process.env.SMARTSHEET_TRACKING_SHEET_ID_PT,
     process.env.SMARTSHEET_SHEET_ID,
@@ -72,6 +85,28 @@ function isImageAttachment(att) {
   return mime.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(name);
 }
 
+function sanitizeDownloadFilename(value, fallback = 'imagem.jpg') {
+  const cleaned = String(value || fallback)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 120);
+  return cleaned || fallback;
+}
+
+function contentTypeFromName(name, fallback = 'application/octet-stream') {
+  const lower = String(name || '').toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.bmp')) return 'image/bmp';
+  if (lower.endsWith('.heic')) return 'image/heic';
+  if (lower.endsWith('.heif')) return 'image/heif';
+  return fallback;
+}
+
 async function getAttachmentDetail(headers, attachmentId, sheetIds) {
   for (const sheetId of sheetIds) {
     try {
@@ -96,6 +131,39 @@ async function getRowImageAttachment(headers, rowId, sheetIds, imageIndex) {
   return null;
 }
 
+async function getRowImageAttachments(headers, rowId, sheetIds) {
+  for (const sheetId of sheetIds) {
+    try {
+      const payload = await fetchJson(`${API_BASE}/sheets/${encodeURIComponent(sheetId)}/rows/${encodeURIComponent(rowId)}/attachments`, { headers });
+      const images = (payload?.data || []).filter(isImageAttachment);
+      if (images.length) {
+        return images.map((attachment) => ({ attachment, sheetId }));
+      }
+      // Se a chamada foi válida mas sem imagens, não tenta outras sheets para não gastar API.
+      return [];
+    } catch (_) {}
+  }
+  return [];
+}
+
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length || 1) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+function parseRowIds(value) {
+  return unique(String(value || '').split(/[\s,;|]+/)).filter((id) => /^\d+$/.test(id));
+}
+
 exports.handler = async (event) => {
   const API_KEY = getToken();
   if (!API_KEY) {
@@ -103,14 +171,48 @@ exports.handler = async (event) => {
   }
 
   const qs = event.queryStringParameters || {};
+  const headers = { Authorization: `Bearer ${API_KEY}` };
+  const sheetIds = getCandidateSheetIds(event);
+
+  // Modo leve para a tela Yinson: consulta metadados de anexos por linha em lotes.
+  // Isso evita carregar attachments no endpoint principal e não estoura o limite de 30s da Netlify.
+  const listMode = qs.list === '1' || qs.mode === 'list' || qs.action === 'list';
+  if (listMode) {
+    const maxRows = Math.max(1, Math.min(Number(qs.limit || 35), 60));
+    const concurrency = Math.max(1, Math.min(Number(qs.concurrency || 6), 10));
+    const rowIds = parseRowIds(qs.rowIds || qs.rows).slice(0, maxRows);
+    if (!rowIds.length) return json(400, { ok: false, error: 'Nenhum rowId informado.' });
+    try {
+      const entries = await mapWithConcurrency(rowIds, concurrency, async (rid) => {
+        const found = await getRowImageAttachments(headers, rid, sheetIds);
+        return [rid, found.map(({ attachment, sheetId }) => ({
+          id: attachment.id,
+          name: attachment.name || `Imagem ${rid}`,
+          mimeType: attachment.mimeType || '',
+          rowId: rid,
+          sheetId,
+          source: 'row-attachment',
+        }))];
+      });
+      const rowImages = Object.fromEntries(entries);
+      const totalImages = Object.values(rowImages).reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0);
+      return json(200, {
+        ok: true,
+        sheetIds,
+        requestedRows: rowIds.length,
+        totalImages,
+        rowImages,
+      });
+    } catch (err) {
+      return json(err.status || 500, { ok: false, error: err.message || 'Erro ao consultar imagens das linhas.' });
+    }
+  }
+
   const id = qs.id;
   const rowId = qs.rowId;
   if (!id && !rowId) {
     return { statusCode: 400, body: 'Missing attachment id or rowId' };
   }
-
-  const headers = { Authorization: `Bearer ${API_KEY}` };
-  const sheetIds = getCandidateSheetIds(event);
 
   try {
     let detail = null;
@@ -125,6 +227,27 @@ exports.handler = async (event) => {
     }
 
     if (detail?.url) {
+      const wantsDownload = qs.download === '1' || qs.download === 'true';
+      if (wantsDownload) {
+        const response = await fetch(detail.url);
+        if (!response.ok) {
+          return { statusCode: response.status || 502, body: 'Falha ao baixar a imagem temporária do Smartsheet.' };
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        const requestedName = qs.filename || detail.name || `imagem-${id || rowId || Date.now()}.jpg`;
+        const filename = sanitizeDownloadFilename(requestedName);
+        const contentType = response.headers.get('content-type') || detail.mimeType || contentTypeFromName(filename);
+        return {
+          statusCode: 200,
+          isBase64Encoded: true,
+          headers: {
+            'Content-Type': contentType,
+            'Content-Disposition': `attachment; filename="${filename}"`,
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+          },
+          body: Buffer.from(arrayBuffer).toString('base64'),
+        };
+      }
       return {
         statusCode: 302,
         headers: {
