@@ -1375,14 +1375,17 @@ function buildSpoolRow(row, parentSummary) {
   const projectType = textValue(row, "Project Type") || textValue(parentSummary, "Project Type");
   const typeFallbackText = [drawingText, parsedDrawing.iso, parsedDrawing.description].filter(Boolean).join(' ');
   const hasIncompleteStageEvidence = hasIncompleteProductionEvidence(stageValues, projectType, typeFallbackText);
-  // v37.76: marcadores definitivos do Tracking prevalecem sobre percentuais intermediarios antigos.
-  // Se Project Finished? estiver marcado, houver Project Finish Date ou o progresso estiver em 100%,
-  // a ISO deve ser finalizada mesmo que alguma etapa anterior ainda esteja desatualizada no cache.
+  // v38.13 Portugal: não concluir uma ISO apenas porque existe Project Finish Date
+  // ou percentual geral em 100% quando ainda há etapas produtivas abertas.
+  // Esta proteção já existia no painel Portugal e evita transformar toda a base em Completed.
   const finished = Boolean(
-    projectFinishedFlag
-    || hasStageValue(stageValues, "Project Finish Date")
-    || overallProgress >= 99.9
-    || individualProgress >= 99.9
+    !hasIncompleteStageEvidence
+    && (
+      projectFinishedFlag
+      || hasStageValue(stageValues, "Project Finish Date")
+      || overallProgress >= 99.9
+      || individualProgress >= 99.9
+    )
   );
   const flow = getOperationalFlow(stageValues, fabricationStartDate, parsePercent(row, "Surface preparation and/or coating") ?? 0, finished, textValue(row, "PROJECT STATUS"), projectType, typeFallbackText);
   const awaitingShipment = flow.state === "awaiting_shipment";
@@ -1624,9 +1627,15 @@ function applyProjectSpoolRollup(project) {
     project.overallProgress = weightedOverallFromStageValues(project.stageValues, project.projectType, project.summaryDrawing);
   }
 
-  // v37.76: Project Finished?/Project Finish Date na linha raiz devem encerrar a BSP.
-  // Nao bloquear a finalizacao por percentuais intermediarios antigos ou por rollup ainda nao reconciliado.
-  const finalFinished = Boolean(summary.allFinished || explicitFinished || allSpoolsFinishedByEvidence);
+  // v38.13 Portugal: Project Finish Date/percentual geral não podem prevalecer
+  // sobre etapas abertas. Mantém a regra histórica validada no painel Portugal:
+  // só finaliza a BSP quando a evidência de conclusão é coerente com as ISOs/etapas.
+  const finalFinished = Boolean(
+    summary.allFinished
+    || (explicitFinished
+      && !hasIncompleteStageEvidence
+      && (spools.length === 0 || allSpoolsFinishedByEvidence))
+  );
   const finalFlow = finalFinished ? makeFlow("Finalizado", "Enviado", 100, "completed", "completed") : summary.flow;
   
   project.demandSummary = summary;
@@ -1736,12 +1745,16 @@ function buildProject(summaryRow, childRows) {
   const summaryDrawing = textValue(summaryRow, "Drawing");
   const stageValues = buildStageValues(summaryRow);
   const summaryHasIncompleteStageEvidence = hasIncompleteProductionEvidence(stageValues, projectType, summaryDrawing);
-  // v37.76: a finalizacao explicita da linha raiz e autoritativa.
+  // v38.13 Portugal: a linha raiz só é finalizada quando não existem
+  // evidências de etapas produtivas/logísticas ainda abertas.
   const summaryFinished = Boolean(
-    projectFinishedFlag
-    || hasStageValue(stageValues, "Project Finish Date")
-    || overallProgress >= 99.9
-    || individualProgress >= 99.9
+    !summaryHasIncompleteStageEvidence
+    && (
+      projectFinishedFlag
+      || hasStageValue(stageValues, "Project Finish Date")
+      || overallProgress >= 99.9
+      || individualProgress >= 99.9
+    )
   );
   const flow = getOperationalFlow(stageValues, fabricationStartDate, coatingPercent, summaryFinished, projectStatus, projectType, summaryDrawing);
   const awaitingShipment = flow.state === "awaiting_shipment";

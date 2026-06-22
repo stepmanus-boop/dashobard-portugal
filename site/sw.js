@@ -1,4 +1,4 @@
-const CACHE_NAME = 'step-dashboard-portugal-38.12-base-brasil-37.83';
+const CACHE_NAME = 'step-dashboard-portugal-38.13-corrige-finalizacao';
 // - v37.02: revisa performance, otimiza i18n dinâmico/Yinson e preserva apontamentos rápidos
 // Versão v28: preserva cache local entre logouts e usa caminho rápido pós-login
 // - Mantém assets do app shell versionados para liberar app.js corrigido imediatamente
@@ -12,7 +12,7 @@ const CACHE_NAME = 'step-dashboard-portugal-38.12-base-brasil-37.83';
 // - v36.52: corrige localização de Tracking por BSP/spool mesmo quando rowId antigo ou campo de avanço está vazio
 // - v36.54: separa carregamento da Validação PCP da consulta Smartsheet para evitar timeout de 30s
 // - v36.59: remove fallback estático antigo e força nova chave de cache por ambiente
-// - v38.12 PT: alinha o carregamento ao Smartsheet e ao cache exclusivos de Portugal
+// - v38.13 PT: corrige falsa finalização em massa quando Project Finish Date/progresso 100 coexistem com etapas abertas
 // - v36.69: adiciona permissão por usuário para visualizar Painel do Cliente
 // - v36.71: adiciona botão discreto de atualização no Portal do Cliente e renova cache local
 // - v36.72: editor do Painel do Cliente passa a ajustar Drawings e Procurement antes da fabricação

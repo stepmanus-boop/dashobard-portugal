@@ -1,14 +1,14 @@
-/* STEP Dashboard Portugal v38.12-base-brasil-v37.83 - carregador de compatibilidade.
+/* STEP Dashboard Portugal v38.13-corrige-finalizacao-portugal - carregador de compatibilidade.
    O app principal foi dividido em chunks em site/js/ para reduzir bloqueio de carregamento e melhorar cache. */
 (function(){
   if (window.__STEP_APP_CHUNKS_LOADED__) return;
   window.__STEP_APP_CHUNKS_LOADED__ = true;
   var chunks = [
-    './js/app-01-core.js?v=38.12-portugal',
-    './js/app-02-client-portal.js?v=38.12-portugal',
-    './js/app-03-dashboard-render.js?v=38.12-portugal',
-    './js/app-04-data-auth-admin.js?v=38.12-portugal',
-    './js/app-05-stage-login-init.js?v=38.12-portugal'
+    './js/app-01-core.js?v=38.13-portugal',
+    './js/app-02-client-portal.js?v=38.13-portugal',
+    './js/app-03-dashboard-render.js?v=38.13-portugal',
+    './js/app-04-data-auth-admin.js?v=38.13-portugal',
+    './js/app-05-stage-login-init.js?v=38.13-portugal'
   ];
   function loadNext(index){
     if (index >= chunks.length) return;

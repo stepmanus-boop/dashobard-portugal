@@ -1,8 +1,8 @@
 {
   "name": "step-dashboard-portugal",
-  "version": "38.12.0",
+  "version": "38.13.0",
   "private": true,
-  "description": "STEP Dashboard Portugal, baseado na versão Brasil v37.83 e isolado na região PT.",
+  "description": "STEP Dashboard Portugal, baseado na versão Brasil v37.83, isolado na região PT e com regra de finalização Portugal corrigida.",
   "scripts": {
     "dev": "netlify dev",
     "lint": "node --check netlify/functions/projects.js",
