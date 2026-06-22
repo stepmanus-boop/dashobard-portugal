@@ -1,5 +1,5 @@
-// v38.15 Portugal: corrige linhas operacionais planas sem Project/parentId que eram ignoradas.
-// A conclusão exige todas as TAGs/ISOs reconhecidas como finalizadas; linhas 9%, 48%, etc. permanecem abertas.
+// v38.16 Portugal: reconstrói o agrupamento BSP/TAG por hierarquia, chave-base e ordem da planilha.
+// Linhas 3%, 9%, 17%, 48%, 49%, 65%, 68%, 97% e 99% com status In Progress permanecem abertas.
 // v37.81: reconcilia alertas com o estado atual da BSP em todos os caminhos de cache; On Hold prevalece imediatamente.
 const fs = require('fs');
 const fsPromises = require('fs/promises');
@@ -15,7 +15,7 @@ const {
 const API_BASE = process.env.SMARTSHEET_API_BASE || "https://api.smartsheet.com/2.0";
 // Build Portugal: site separado do Brasil, lendo exclusivamente as fontes PT.
 const OPERATION_REGION = 'PT';
-const TRACKING_LOGIC_VERSION = 'pt-38.15-flat-operational-rows';
+const TRACKING_LOGIC_VERSION = 'pt-38.16-robust-bsp-tag-grouping';
 const SHEET_NAME = process.env.SMARTSHEET_SHEET_NAME_PT || process.env.SMARTSHEET_SHEET_NAME || "Progress Tracking Sheet - Piping Fabrication PT";
 const SHEET_ID_ENV = process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_TRACKING_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID || "";
 const WIP_STEP_SHEET_NAME = process.env.SMARTSHEET_WIP_STEP_SHEET_NAME_PT || process.env.SMARTSHEET_WIP_STEP_SHEET_NAME || "WORK-IN-PROGRESS -PT";
@@ -347,8 +347,23 @@ function rowHasOperationalItemEvidence(row) {
   if (textValue(row, "Item")) return true;
   if (hasExplicitCell(row, "% Overall Progress") || hasExplicitCell(row, "% Individual Progress")) return true;
   if (hasExplicitCell(row, "Project Finished?")) return true;
-  if (textValue(row, "Project Status") || textValue(row, "PROJECT STATUS") || textValue(row, "Overall Project Status")) return true;
+  if (textValue(row, "Project Status") || textValue(row, "PROJECT STATUS") || textValue(row, "Overall Project Status") || textValue(row, "Status")) return true;
   return STAGE_ORDER.some((stage) => hasExplicitCell(row, stage.key));
+}
+
+function rowHasExplicitOpenProgressEvidence(row) {
+  if (!row) return false;
+  const overall = parsePercent(row, "% Overall Progress");
+  const individual = parsePercent(row, "% Individual Progress");
+  if (overall != null && Number(overall) < 99.9) return true;
+  if (individual != null && Number(individual) < 99.9) return true;
+  const status = normalizeStatusText([
+    textValue(row, "Project Status"),
+    textValue(row, "PROJECT STATUS"),
+    textValue(row, "Overall Project Status"),
+    textValue(row, "Status"),
+  ].filter(Boolean).join(" "));
+  return /\b(IN PROGRESS|ONGOING|OPEN|EM ANDAMENTO|EM EXECUCAO|EM PROGRESSO)\b/.test(status);
 }
 
 function excelSerialToDate(serial) {
@@ -667,8 +682,8 @@ function hasIncompleteProductionEvidence(stageValues, projectType = '', fallback
 
 function hasExplicitOpenProgressEvidence(item) {
   if (!item) return false;
-  const overall = Number(item.overallProgress);
-  const individual = Number(item.individualProgress);
+  const overall = Number(item.sourceOverallProgress ?? item.overallProgress);
+  const individual = Number(item.sourceIndividualProgress ?? item.individualProgress);
   if (item.hasOverallProgressSource === true && Number.isFinite(overall) && overall < 99.9) return true;
   if (item.hasIndividualProgressSource === true && Number.isFinite(individual) && individual < 99.9) return true;
   const status = normalizeStatusText(item.sourceProjectStatus || item.projectStatus || '');
@@ -730,14 +745,13 @@ function deriveOperationalStage(stageValues, fabricationStartDate, coatingPercen
   const coating = Number.isFinite(Number(coatingPercent)) ? Number(coatingPercent) : pct(stageValues, "Surface preparation and/or coating");
   const finalInspection = pct(stageValues, "Final Inspection");
   const packageDelivered = pct(stageValues, "Package and Delivered");
-  const projectFinished = isStageBooleanDone(stageValues, "Project Finished?");
   const normalizedProjectStatus = String(projectStatus || "").trim().toUpperCase().replace(/\s+/g, " ");
   const isHold = ["ON HOLD", "HOLD", "PAUSED", "EM ESPERA"].includes(normalizedProjectStatus);
   const includeHydro = isSpoolMaterialType(projectType, fallbackText);
 
   // v38.15 Portugal: Project Finish Date é apenas uma data informativa.
   // A finalização depende exclusivamente do checkbox Project Finished?.
-  if (finished || projectFinished) return makeFlow("Finalizado", "Enviado", 100, "completed", "completed");
+  if (finished) return makeFlow("Finalizado", "Enviado", 100, "completed", "completed");
 
   const coatingCompleted = coating >= 100;
   const finalInspectionStarted = finalInspection > 0;
@@ -1413,14 +1427,15 @@ function buildSpoolRow(row, parentSummary) {
   const overallProgress = rowOverallProgress ?? rowIndividualProgress ?? 0;
   const individualProgress = rowIndividualProgress ?? overallProgress;
   const projectFinishedFlag = isCellTruthy(row, "Project Finished?");
+  const sourceProjectStatus = textValue(row, "Project Status") || textValue(row, "PROJECT STATUS") || textValue(row, "Overall Project Status") || textValue(row, "Status");
   const fabricationStartDate = textValue(row, "Fabrication Start Date");
   const stageValues = buildStageValues(row);
   const projectType = textValue(row, "Project Type") || textValue(parentSummary, "Project Type");
   const typeFallbackText = [drawingText, parsedDrawing.iso, parsedDrawing.description].filter(Boolean).join(' ');
   // v38.15 Portugal: conclusão da ISO segue estritamente o checkbox.
   // Linhas com 100% mas checkbox vazio permanecem abertas, exatamente como no Tracking.
-  const finished = projectFinishedFlag === true;
-  const flow = getOperationalFlow(stageValues, fabricationStartDate, parsePercent(row, "Surface preparation and/or coating") ?? 0, finished, textValue(row, "PROJECT STATUS"), projectType, typeFallbackText);
+  const finished = projectFinishedFlag === true && !rowHasExplicitOpenProgressEvidence(row);
+  const flow = getOperationalFlow(stageValues, fabricationStartDate, parsePercent(row, "Surface preparation and/or coating") ?? 0, finished, sourceProjectStatus, projectType, typeFallbackText);
   const awaitingShipment = flow.state === "awaiting_shipment";
   const uiState = uiStateFromFlow(flow, finished);
   const coatingPercent = parsePercent(row, "Surface preparation and/or coating") ?? 0;
@@ -1475,9 +1490,11 @@ function buildSpoolRow(row, parentSummary) {
     stageAlert: flow.stageStatus === "in_progress" || flow.stageStatus === "waiting",
     individualProgress,
     overallProgress,
+    sourceOverallProgress: rowOverallProgress,
+    sourceIndividualProgress: rowIndividualProgress,
     hasOverallProgressSource: rowOverallProgress != null,
     hasIndividualProgressSource: rowIndividualProgress != null,
-    sourceProjectStatus: textValue(row, "Project Status") || textValue(row, "PROJECT STATUS") || textValue(row, "Overall Project Status") || textValue(row, "Status"),
+    sourceProjectStatus,
     milestones: progress.milestones,
     stageValues,
     finished: finished,
@@ -1668,8 +1685,8 @@ function applyProjectSpoolRollup(project) {
     // Atualiza estatísticas de spools baseadas no estado real de cada um
     project.spoolStats = spools.reduce((acc, s) => {
       acc.total += 1;
-      if (s.uiState === "completed" || s.finished) acc.completed += 1;
-      else if (s.uiState === "in_progress" || s.overallProgress > 0) acc.inProgress += 1;
+      if (isSpoolFinishedByState(s)) acc.completed += 1;
+      else if (s.uiState === "in_progress" || s.overallProgress > 0 || hasExplicitOpenProgressEvidence(s)) acc.inProgress += 1;
       else acc.notStarted += 1;
       return acc;
     }, { total: 0, completed: 0, inProgress: 0, notStarted: 0 });
@@ -1787,7 +1804,7 @@ function applyProjectSpoolRollup(project) {
   return project;
 }
 
-function buildProject(summaryRow, childRows) {
+function buildProject(summaryRow, childRows, options = {}) {
   const projectText = textValue(summaryRow, "Project");
   const parts = parseProjectParts(projectText);
   const progress = deriveProgress(summaryRow);
@@ -1806,7 +1823,7 @@ function buildProject(summaryRow, childRows) {
   const stageValues = buildStageValues(summaryRow);
   // v38.15 Portugal: a linha raiz também respeita exclusivamente o checkbox.
   // O rollup posterior valida os filhos e impede que a raiz finalize TAGs abertas.
-  const summaryFinished = projectFinishedFlag === true;
+  const summaryFinished = projectFinishedFlag === true && !rowHasExplicitOpenProgressEvidence(summaryRow);
   const flow = getOperationalFlow(stageValues, fabricationStartDate, coatingPercent, summaryFinished, projectStatus, projectType, summaryDrawing);
   const awaitingShipment = flow.state === "awaiting_shipment";
   const uiState = uiStateFromFlow(flow, summaryFinished) || projectUiState(projectStatus, overallProgress, summaryFinished, fabricationStartDate, awaitingShipment);
@@ -1870,6 +1887,8 @@ function buildProject(summaryRow, childRows) {
     currentStageAlert: flow.stageStatus === "in_progress" || flow.stageStatus === "waiting",
     individualProgress: spools.length > 0 ? 0 : individualProgress, // Será calculado no rollup se houver spools
     overallProgress: spools.length > 0 ? 0 : overallProgress,       // Será calculado no rollup se houver spools
+    sourceOverallProgress: rowOverallProgress,
+    sourceIndividualProgress: rowIndividualProgress,
     hasOverallProgressSource: rowOverallProgress != null,
     hasIndividualProgressSource: rowIndividualProgress != null,
     sourceProjectStatus: projectStatus,
@@ -1901,6 +1920,7 @@ function buildProject(summaryRow, childRows) {
     spools,
     spoolStats,
   };
+  if (options.deferRollup) return project;
   return decorateProjectTratativaObservation(applyProjectSpoolRollup(project));
 }
 
@@ -1926,87 +1946,156 @@ function mapApiRows(sheet) {
 
 function buildProjects(rows) {
   const projects = [];
-  const rowsById = new Map(rows.map((row) => [row.id, row]));
-  const childrenByParent = new Map();
+  const rowsById = new Map((Array.isArray(rows) ? rows : []).map((row) => [row.id, row]));
+  const projectByRootRowId = new Map();
+  const projectByExactKey = new Map();
+  const ownerByRowId = new Map();
+  const diagnostics = {
+    rowsTotal: Array.isArray(rows) ? rows.length : 0,
+    operationalRows: 0,
+    attachedOperationalRows: 0,
+    orphanOperationalRows: 0,
+    projectsBuilt: 0,
+  };
 
-  for (const row of rows) {
-    if (row.parentId && rowsById.has(row.parentId)) {
-      if (!childrenByParent.has(row.parentId)) childrenByParent.set(row.parentId, []);
-      childrenByParent.get(row.parentId).push(row);
-    }
+  let currentProject = null;
+
+  function getProjectKeyFromRow(row) {
+    return normalizeBspLookupKey(textValue(row, "Project"));
   }
 
-  function getLeafChildRows(parentId) {
-    const directChildren = childrenByParent.get(parentId) || [];
-    const leafRows = [];
-    for (const child of directChildren) {
-      const descendants = getLeafChildRows(child.id);
-      if (descendants.length) leafRows.push(...descendants);
-      else leafRows.push(child);
-    }
-    return leafRows;
-  }
+  function findProjectByCompatibleKey(rowKey) {
+    if (!rowKey) return null;
+    if (projectByExactKey.has(rowKey)) return projectByExactKey.get(rowKey);
 
-  let currentSummary = null;
-
-  for (const row of rows) {
-    const currentProjectNumber = currentSummary ? parseProjectParts(textValue(currentSummary, "Project")).number : '';
-    const rowProjectNumber = parseProjectParts(textValue(row, "Project")).number;
-
-    // v36.71 - quando a planilha está em formato plano, as linhas seguintes da mesma BSP
-    // podem não vir como children do Smartsheet e também podem não ter coluna Drawing.
-    // Se a linha atual tem o mesmo número da última BSP aberta, ela deve entrar como item/tag
-    // da BSP atual, não abrir uma BSP duplicada nem ser ignorada.
-    const sameProjectFlatRow = Boolean(
-      currentSummary
-      && rowProjectNumber
-      && currentProjectNumber
-      && rowProjectNumber === currentProjectNumber
-      && !row.parentId
-    );
-    const blankProjectFlatOperationalRow = Boolean(
-      currentSummary
-      && !row.parentId
-      && !rowProjectNumber
-      && rowHasOperationalItemEvidence(row)
-    );
-
-    // Portugal usa também blocos planos: a linha-mãe contém o Project e as linhas
-    // seguintes podem deixar Project e parentId vazios. Essas TAGs eram ignoradas,
-    // fazendo a checkbox da linha-mãe concluir toda a BSP mesmo com linhas em 9%/48%.
-    if (sameProjectFlatRow || blankProjectFlatOperationalRow) {
-      const lastProject = projects[projects.length - 1];
-      if (lastProject) {
-        const spool = buildSpoolRow(row, currentSummary);
-        lastProject.spools.push(spool);
-        lastProject.spoolStats.total += 1;
-        if (spool.uiState === "completed") lastProject.spoolStats.completed += 1;
-        else if (spool.uiState === "in_progress") lastProject.spoolStats.inProgress += 1;
-        else lastProject.spoolStats.notStarted += 1;
-        continue;
+    let selected = null;
+    let selectedLength = -1;
+    for (const [key, project] of projectByExactKey.entries()) {
+      if (!key) continue;
+      const compatible = rowKey.startsWith(key) || key.startsWith(rowKey);
+      if (!compatible) continue;
+      const length = Math.min(key.length, rowKey.length);
+      if (length > selectedLength) {
+        selected = project;
+        selectedLength = length;
       }
     }
+    return selected;
+  }
 
-    if (isSummaryRow(row)) {
-      const projectChildren = getLeafChildRows(row.id);
-      currentSummary = row;
-      projects.push(buildProject(row, projectChildren));
+  function findOwnerByHierarchy(row) {
+    let parentId = row?.parentId;
+    const visited = new Set();
+    while (parentId && !visited.has(parentId)) {
+      visited.add(parentId);
+      const directOwner = ownerByRowId.get(parentId) || projectByRootRowId.get(parentId);
+      if (directOwner) return directOwner;
+      const parentRow = rowsById.get(parentId);
+      parentId = parentRow?.parentId || null;
+    }
+    return null;
+  }
+
+  function rowLooksLikeIsoOrTagChild(row) {
+    const projectText = String(textValue(row, "Project") || "").toUpperCase();
+    const drawing = String(textValue(row, "Drawing") || "").toUpperCase();
+    return Boolean(
+      /\b(ISO|SPL|SPOOL|TAG|SUP|SUPPORT)\b/.test(projectText)
+      || (drawing && drawing !== "ISO")
+    );
+  }
+
+  function createProjectFromRow(row) {
+    const project = buildProject(row, [], { deferRollup: true });
+    projects.push(project);
+    projectByRootRowId.set(row.id, project);
+    ownerByRowId.set(row.id, project);
+    const key = getProjectKeyFromRow(row);
+    if (key && !projectByExactKey.has(key)) projectByExactKey.set(key, project);
+    currentProject = project;
+    return project;
+  }
+
+  function attachOperationalRow(project, row) {
+    if (!project || !row || row.id === project.rowId || !rowHasOperationalItemEvidence(row)) return false;
+    const parentSummary = {
+      id: project.rowId,
+      rowNumber: project.rowNumber,
+      values: {
+        Project: { raw: project.projectDisplay || project.projectNumber || '', display: project.projectDisplay || project.projectNumber || '' },
+        Client: { raw: project.client || '', display: project.client || '' },
+        Vessel: { raw: project.vessel || '', display: project.vessel || '' },
+        Priority: { raw: project.priority || '', display: project.priority || '' },
+        PM: { raw: project.pm || '', display: project.pm || '' },
+        'Project Type': { raw: project.projectType || '', display: project.projectType || '' },
+      },
+    };
+    project.spools.push(buildSpoolRow(row, parentSummary));
+    ownerByRowId.set(row.id, project);
+    diagnostics.attachedOperationalRows += 1;
+    return true;
+  }
+
+  for (const row of rows) {
+    const operational = rowHasOperationalItemEvidence(row);
+    if (operational) diagnostics.operationalRows += 1;
+
+    const rowKey = getProjectKeyFromRow(row);
+    const hierarchyOwner = findOwnerByHierarchy(row);
+    const keyOwner = findProjectByCompatibleKey(rowKey);
+    const summaryCandidate = isSummaryRow(row);
+
+    if (row.parentId) {
+      const owner = hierarchyOwner || keyOwner || currentProject;
+      if (owner && attachOperationalRow(owner, row)) {
+        currentProject = owner;
+      } else if (operational) {
+        diagnostics.orphanOperationalRows += 1;
+      }
       continue;
     }
 
-    if (!currentSummary) continue;
-    if (!isChildRow(row)) continue;
+    const exactKeyOwner = rowKey ? projectByExactKey.get(rowKey) : null;
 
-    if (!rowProjectNumber || rowProjectNumber !== currentProjectNumber) continue;
+    // A mesma BSP pode repetir o Project em todas as TAGs/ISOs. Correspondência
+    // exata sempre pertence à BSP já aberta.
+    if (exactKeyOwner) {
+      if (row.id !== exactKeyOwner.rowId && operational) attachOperationalRow(exactKeyOwner, row);
+      ownerByRowId.set(row.id, exactKeyOwner);
+      currentProject = exactKeyOwner;
+      continue;
+    }
 
-    const lastProject = projects[projects.length - 1];
-    if (!lastProject) continue;
-    const spool = buildSpoolRow(row, currentSummary);
-    lastProject.spools.push(spool);
-    lastProject.spoolStats.total += 1;
-    if (spool.uiState === "completed") lastProject.spoolStats.completed += 1;
-    else if (spool.uiState === "in_progress") lastProject.spoolStats.inProgress += 1;
-    else lastProject.spoolStats.notStarted += 1;
+    // Uma nova linha-mãe real deve abrir outra BSP, mesmo quando o seu código é
+    // prefixo/continuação de outra (ex.: 25-732 e 25-732-03). Referências explícitas
+    // de ISO/TAG continuam vinculadas à BSP compatível já existente.
+    if (summaryCandidate && !(keyOwner && rowLooksLikeIsoOrTagChild(row))) {
+      createProjectFromRow(row);
+      continue;
+    }
+
+    if (keyOwner) {
+      if (operational) attachOperationalRow(keyOwner, row);
+      ownerByRowId.set(row.id, keyOwner);
+      currentProject = keyOwner;
+      continue;
+    }
+
+    // Blocos planos de Portugal: qualquer linha operacional entre duas BSPs pertence
+    // à última BSP aberta, mesmo com Project vazio ou com referência própria da ISO.
+    if (currentProject && operational) {
+      attachOperationalRow(currentProject, row);
+      continue;
+    }
+
+    // Último fallback: linha operacional com Project mas sem os campos clássicos de
+    // linha-mãe. Ela vira projeto isolado para nunca desaparecer dos cards.
+    if (operational && rowKey) {
+      createProjectFromRow(row);
+      continue;
+    }
+
+    if (operational) diagnostics.orphanOperationalRows += 1;
   }
 
   for (const project of projects) {
@@ -2018,16 +2107,19 @@ function buildProjects(rows) {
     }
     const unique = Array.from(uniqueMap.values()).sort((a, b) => (Number(a?.rowNumber || 0) - Number(b?.rowNumber || 0)));
     project.spools = unique;
+    if (Number(project.quantitySpools || 0) <= 0) project.quantitySpools = unique.length;
     project.spoolStats = unique.reduce((acc, spool) => {
       acc.total += 1;
-      if (spool.uiState === "completed") acc.completed += 1;
-      else if (spool.uiState === "in_progress") acc.inProgress += 1;
+      if (isSpoolFinishedByState(spool)) acc.completed += 1;
+      else if (spool.uiState === "in_progress" || Number(spool.overallProgress || 0) > 0 || hasExplicitOpenProgressEvidence(spool)) acc.inProgress += 1;
       else acc.notStarted += 1;
       return acc;
     }, { total: 0, completed: 0, inProgress: 0, notStarted: 0 });
-    applyProjectSpoolRollup(project);
+    decorateProjectTratativaObservation(applyProjectSpoolRollup(project));
   }
 
+  diagnostics.projectsBuilt = projects.length;
+  buildProjects.lastDiagnostics = diagnostics;
   return projects;
 }
 
@@ -3611,6 +3703,7 @@ async function buildPayload(options = {}) {
       version,
       sheetVersion,
       logicVersion: TRACKING_LOGIC_VERSION,
+      groupingDiagnostics: buildProjects.lastDiagnostics || null,
       wipStepSheetName: wipPoData.sheetName || WIP_STEP_SHEET_NAME,
       wipStepVersion: wipPoData.version || null,
       wipStepPoAvailable: Boolean(wipPoData.available),
