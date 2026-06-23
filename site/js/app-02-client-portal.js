@@ -3113,6 +3113,14 @@ function ensureClientBspExecutiveModalEl() {
       downloadClientTrackingReport(project);
       return;
     }
+    const docControlButton = event.target.closest('[data-client-doc-control]');
+    if (docControlButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const project = state.projects.find((item) => String(item.rowId) === String(docControlButton.dataset.clientDocControl));
+      if (project) openClientDocControlModal(project);
+      return;
+    }
     const editButton = event.target.closest('[data-client-bsp-edit]');
     if (editButton) {
       const project = state.projects.find((item) => String(item.rowId) === String(editButton.dataset.clientBspEdit));
@@ -3200,6 +3208,161 @@ function closeClientBspExecutive() {
   document.body.classList.remove('client-exec-open');
   state.clientBspOverrides.activeExecutiveProjectId = null;
   state.clientBspOverrides.editingProjectId = null;
+}
+
+
+function closeClientDocControlModal() {
+  const modal = document.getElementById('client-doc-control-modal');
+  if (modal) modal.classList.add('hidden');
+  document.body.classList.remove('client-doc-control-open');
+}
+
+function ensureClientDocControlModalEl() {
+  let modal = document.getElementById('client-doc-control-modal');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.id = 'client-doc-control-modal';
+  modal.className = 'client-exec-modal hidden';
+  modal.innerHTML = `
+    <div class="client-exec-backdrop" data-client-doc-close></div>
+    <section class="client-exec-shell client-doc-shell" role="dialog" aria-modal="true" aria-label="Doc Control">
+      <button type="button" class="client-exec-close" data-client-doc-close>×</button>
+      <div id="client-doc-control-content"></div>
+    </section>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', (event) => {
+    if (event.target.closest('[data-client-doc-close]')) closeClientDocControlModal();
+  });
+  return modal;
+}
+
+function getClientDocControlBspCode(project) {
+  const candidates = [
+    getClientProjectDisplayCode(project),
+    project?.project,
+    project?.projectCode,
+    project?.bsp,
+    project?.bspKey,
+    project?.name,
+  ];
+  for (const value of candidates) {
+    if (value && String(value).trim()) return String(value).trim();
+  }
+  return '';
+}
+
+function getClientDocControlStatusClass(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return 'neutral';
+  if (text.includes('approved')) return 'success';
+  if (text.includes('client comments')) return 'warning';
+  if (text.includes('on going') || text.includes('ongoing') || text.includes('in progress')) return 'info';
+  if (text.includes('not started')) return 'muted';
+  if (text.includes('sent')) return 'sent';
+  return 'neutral';
+}
+
+function renderClientDocControlTable(payload) {
+  const columns = payload?.columns || {};
+  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  if (!rows.length) {
+    return `<div class="client-empty-state">Nenhum documento encontrado no Doc Control para a BSP <strong>${escapeHtml(payload?.bsp || '')}</strong>.</div>`;
+  }
+  return `
+    <div class="client-table-wrap client-table-wrap--compact client-doc-table-wrap">
+      <table class="client-bsp-table client-doc-table">
+        <thead>
+          <tr>
+            <th>${escapeHtml(columns.primary || 'Primário')}</th>
+            <th>${escapeHtml(columns.clientDocNo || 'Client Doc Nº / PO Number')}</th>
+            <th>${escapeHtml(columns.book || 'Book')}</th>
+            <th>${escapeHtml(columns.cdrCode || 'CDR Code')}</th>
+            <th>${escapeHtml(columns.seqNumber || 'Seq. Number')}</th>
+            <th>${escapeHtml(columns.currentRev || 'Current Rev.')}</th>
+            <th>${escapeHtml(columns.stepDocNumber || 'STEP Doc. Number')}</th>
+            <th>${escapeHtml(columns.documentTitle || 'Document Title')}</th>
+            <th>${escapeHtml(columns.status || 'Status')}</th>
+            <th>${escapeHtml(columns.issuedDate || 'Issued Date')}</th>
+            <th>${escapeHtml(columns.returnDate || 'Return Date')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td>${escapeHtml(row.primary || '—')}</td>
+              <td>${escapeHtml(row.clientDocNo || '—')}</td>
+              <td>${escapeHtml(row.book || '—')}</td>
+              <td>${escapeHtml(row.cdrCode || '—')}</td>
+              <td>${escapeHtml(row.seqNumber || '—')}</td>
+              <td>${escapeHtml(row.currentRev || '—')}</td>
+              <td>${escapeHtml(row.stepDocNumber || '—')}</td>
+              <td>${escapeHtml(row.documentTitle || '—')}</td>
+              <td><span class="client-doc-status client-doc-status--${getClientDocControlStatusClass(row.status)}">${escapeHtml(row.status || '—')}</span></td>
+              <td>${escapeHtml(row.issuedDate || '—')}</td>
+              <td>${escapeHtml(row.returnDate || '—')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function openClientDocControlModal(project) {
+  const modal = ensureClientDocControlModalEl();
+  const content = document.getElementById('client-doc-control-content');
+  const bsp = getClientDocControlBspCode(project);
+  if (!content) return;
+  content.innerHTML = `
+    <header class="client-exec-header client-doc-header">
+      <div>
+        <p class="client-kicker">Doc control (Exibir somente)</p>
+        <h2>${escapeHtml(bsp || 'BSP')}</h2>
+        <p>${escapeHtml(getProjectClientLabel(project))} • ${escapeHtml(getProjectVesselLabel(project))}</p>
+      </div>
+    </header>
+    <div class="client-doc-loading">Carregando documentos do Doc Control...</div>
+  `;
+  modal.classList.remove('hidden');
+  document.body.classList.add('client-doc-control-open');
+  fetch(`/api/client-doc-control?bsp=${encodeURIComponent(bsp)}&force=1`, {
+    credentials: 'same-origin',
+    cache: 'no-store',
+  })
+    .then((response) => response.text().then((text) => ({ response, text })))
+    .then(({ response, text }) => {
+      let data = null;
+      try {
+        data = JSON.parse(text || '{}');
+      } catch (error) {
+        throw new Error(`API do Doc Control retornou resposta inválida. Status HTTP: ${response.status}.`);
+      }
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.error || 'Não foi possível carregar o Doc Control desta BSP.');
+      }
+      content.innerHTML = `
+        <header class="client-exec-header client-doc-header">
+          <div>
+            <p class="client-kicker">Doc control (Exibir somente)</p>
+            <h2>${escapeHtml(data.bsp || bsp || 'BSP')}</h2>
+            <p>${escapeHtml(getProjectClientLabel(project))} • ${escapeHtml(getProjectVesselLabel(project))} • ${escapeHtml(data.total || 0)} documento(s)</p>
+          </div>
+        </header>
+        ${renderClientDocControlTable(data)}
+      `;
+    })
+    .catch((error) => {
+      content.innerHTML = `
+        <header class="client-exec-header client-doc-header">
+          <div>
+            <p class="client-kicker">Doc control (Exibir somente)</p>
+            <h2>${escapeHtml(bsp || 'BSP')}</h2>
+            <p>${escapeHtml(getProjectClientLabel(project))} • ${escapeHtml(getProjectVesselLabel(project))}</p>
+          </div>
+        </header>
+        <div class="client-empty-state">${escapeHtml(error?.message || 'Falha ao carregar o Doc Control.')}</div>
+      `;
+    });
 }
 
 function getClientMacroProjects(projects = state.projects) {
@@ -4008,6 +4171,7 @@ function openClientBspExecutive(project, options = {}) {
         <div class="client-exec-header-actions">
           <button class="client-exec-pdf-button" type="button" data-client-download-pdf data-client-report-type="project" data-client-report-project-id="${escapeHtml(project.rowId)}">Baixar PDF</button>
           <button class="client-exec-pdf-button client-exec-report-button" type="button" data-client-download-report="${escapeHtml(project.rowId)}">Baixar Excel do Cronograma</button>
+          <button class="client-exec-pdf-button client-exec-doc-control-button" type="button" data-client-doc-control="${escapeHtml(project.rowId)}">Doc control</button>
           ${canManageClientBspPanel(project) ? `<button class="client-exec-pdf-button client-exec-edit-button" type="button" data-client-bsp-edit="${escapeHtml(project.rowId)}">Editar datas / informações</button>` : ''}
           <!-- Botões de imagens da BSP: cliente apenas visualiza; importação fica restrita a admin/PM -->
           <button class="client-exec-pdf-button client-exec-images-button" type="button" data-client-bsp-images="${escapeHtml(project.rowId)}">Imagens</button>
@@ -4905,3 +5069,25 @@ function handleClientApiModalClick(event) {
   }
 }
 
+
+
+(function ensureClientDocControlStyles() {
+  if (document.getElementById('client-doc-control-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'client-doc-control-styles';
+  style.textContent = `
+    .client-doc-shell { max-width: min(1500px, 96vw); }
+    .client-doc-loading { padding: 24px; font-size: 14px; opacity: 0.9; }
+    .client-doc-table-wrap { max-height: 70vh; overflow: auto; }
+    .client-doc-table { min-width: 1280px; }
+    .client-doc-table thead th { position: sticky; top: 0; z-index: 2; }
+    .client-doc-status { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .client-doc-status--success { background: rgba(54, 179, 126, 0.18); color: #67e8a1; }
+    .client-doc-status--warning { background: rgba(255, 196, 61, 0.18); color: #ffd86b; }
+    .client-doc-status--info { background: rgba(75, 181, 255, 0.18); color: #8dd2ff; }
+    .client-doc-status--muted { background: rgba(255,255,255,0.08); color: #d6dce8; }
+    .client-doc-status--sent { background: rgba(99, 102, 241, 0.18); color: #b8c0ff; }
+    .client-doc-status--neutral { background: rgba(255,255,255,0.12); color: #fff; }
+  `;
+  document.head.appendChild(style);
+})();

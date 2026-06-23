@@ -1,6 +1,6 @@
 {
   "name": "step-dashboard-portugal",
-  "version": "38.16.0",
+  "version": "38.17.0",
   "private": true,
   "description": "STEP Dashboard Portugal, baseado na versão Brasil v37.83, isolado na região PT e com agrupamento robusto de BSP/TAG/ISO.",
   "scripts": {

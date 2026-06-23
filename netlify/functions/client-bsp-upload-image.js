@@ -8,7 +8,7 @@ const { requireSession, normalizeText, normalizeSectorValue } = require('./_auth
 const { isSupabaseConfigured, getUserById } = require('./_supabase');
 const { loadProjectPayload } = require('./_projectLookup');
 
-const DEFAULT_TRACKING_SHEET_ID = process.env.SMARTSHEET_TRACKING_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_TRACKING_SHEET_ID || process.env.SMARTSHEET_SHEET_ID || '';
+const DEFAULT_TRACKING_SHEET_ID = '7664451754872708';
 
 function getSmartsheetToken() {
   return process.env.SMARTSHEET_API_KEY_PT
@@ -138,7 +138,7 @@ exports.handler = async (event) => {
   }
 
   const rowId = String(payload.rowId || '').trim();
-  const sheetId = String(payload.sheetId || process.env.SMARTSHEET_TRACKING_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_TRACKING_SHEET_ID || process.env.SMARTSHEET_SHEET_ID || DEFAULT_TRACKING_SHEET_ID).trim();
+  const sheetId = DEFAULT_TRACKING_SHEET_ID;
   const mimeType = String(payload.mimeType || 'image/jpeg').trim().toLowerCase();
   const fileName = sanitizeFileName(payload.fileName);
   const base64 = normalizeBase64(payload.base64);

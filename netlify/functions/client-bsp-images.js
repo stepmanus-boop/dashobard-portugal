@@ -5,7 +5,7 @@
 // 2) discussion attachments when returned by the sheet API;
 // 3) cell images through the Smartsheet /imageurls endpoint.
 
-const DEFAULT_TRACKING_SHEET_ID = process.env.SMARTSHEET_TRACKING_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_TRACKING_SHEET_ID || process.env.SMARTSHEET_SHEET_ID || '';
+const DEFAULT_TRACKING_SHEET_ID = '7664451754872708';
 
 function getSmartsheetToken() {
   return process.env.SMARTSHEET_API_KEY_PT
@@ -27,12 +27,7 @@ function getSmartsheetToken() {
 
 function getTrackingSheetId(query = {}) {
   return String(
-    query.sheetId
-      || process.env.SMARTSHEET_TRACKING_SHEET_ID_PT
-      || process.env.SMARTSHEET_SHEET_ID_PT
-      || process.env.SMARTSHEET_TRACKING_SHEET_ID
-      || process.env.SMARTSHEET_SHEET_ID
-      || DEFAULT_TRACKING_SHEET_ID
+    DEFAULT_TRACKING_SHEET_ID
   ).trim() || DEFAULT_TRACKING_SHEET_ID;
 }
 

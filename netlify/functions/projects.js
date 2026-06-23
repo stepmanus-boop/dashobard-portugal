@@ -1,5 +1,5 @@
-// v38.16 Portugal: reconstrói o agrupamento BSP/TAG por hierarquia, chave-base e ordem da planilha.
-// Linhas 3%, 9%, 17%, 48%, 49%, 65%, 68%, 97% e 99% com status In Progress permanecem abertas.
+// v38.17 Portugal: fixa o Tracking oficial 7664451754872708 e aplica bloqueio de conclusão pelas linhas-fonte.
+// Qualquer linha do bloco com percentual <100%, status In Progress ou checkbox desmarcado mantém a BSP aberta.
 // v37.81: reconcilia alertas com o estado atual da BSP em todos os caminhos de cache; On Hold prevalece imediatamente.
 const fs = require('fs');
 const fsPromises = require('fs/promises');
@@ -15,9 +15,11 @@ const {
 const API_BASE = process.env.SMARTSHEET_API_BASE || "https://api.smartsheet.com/2.0";
 // Build Portugal: site separado do Brasil, lendo exclusivamente as fontes PT.
 const OPERATION_REGION = 'PT';
-const TRACKING_LOGIC_VERSION = 'pt-38.16-robust-bsp-tag-grouping';
-const SHEET_NAME = process.env.SMARTSHEET_SHEET_NAME_PT || process.env.SMARTSHEET_SHEET_NAME || "Progress Tracking Sheet - Piping Fabrication PT";
-const SHEET_ID_ENV = process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_TRACKING_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID || "";
+const TRACKING_LOGIC_VERSION = 'pt-38.17-sheet-7664451754872708-source-row-guard';
+const PORTUGAL_TRACKING_SHEET_ID = '7664451754872708';
+const SHEET_NAME = process.env.SMARTSHEET_SHEET_NAME_PT || "Progress Tracking Sheet - Piping Fabrication PT";
+// Site Portugal separado: não usa fallback genérico nem procura outra planilha por nome.
+const SHEET_ID_ENV = PORTUGAL_TRACKING_SHEET_ID;
 const WIP_STEP_SHEET_NAME = process.env.SMARTSHEET_WIP_STEP_SHEET_NAME_PT || process.env.SMARTSHEET_WIP_STEP_SHEET_NAME || "WORK-IN-PROGRESS -PT";
 const WIP_STEP_SHEET_ID_ENV = process.env.SMARTSHEET_WIP_STEP_SHEET_ID_PT || process.env.SMARTSHEET_WORK_IN_PROGRESS_PT_SHEET_ID || process.env.SMARTSHEET_WIP_STEP_SHEET_ID || process.env.SMARTSHEET_WORK_IN_PROGRESS_STEP_SHEET_ID || "";
 const TOKEN = process.env.SMARTSHEET_API_KEY_PT || process.env.SMARTSHEET_TOKEN_PT || process.env.SMARTSHEET_ACCESS_TOKEN_PT || process.env.SMARTSHEET_API_TOKEN_PT || process.env.SMARTSHEET_BEARER_TOKEN_PT || process.env.SMARTSHEET_PAT_PT || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN_PT || process.env.SMARTSHEET_API_KEY || process.env.SMARTSHEET_TOKEN || process.env.SMARTSHEET_ACCESS_TOKEN || process.env.SMARTSHEET_API_TOKEN || process.env.SMARTSHEET_BEARER_TOKEN || process.env.SMARTSHEET_PAT || process.env.SMARTSHEET_PERSONAL_ACCESS_TOKEN || "";
@@ -364,6 +366,69 @@ function rowHasExplicitOpenProgressEvidence(row) {
     textValue(row, "Status"),
   ].filter(Boolean).join(" "));
   return /\b(IN PROGRESS|ONGOING|OPEN|EM ANDAMENTO|EM EXECUCAO|EM PROGRESSO)\b/.test(status);
+}
+
+
+function getSourceRowCompletionState(row) {
+  const overall = parsePercent(row, "% Overall Progress");
+  const individual = parsePercent(row, "% Individual Progress");
+  const finishedFlag = isCellTruthy(row, "Project Finished?");
+  const hasFinishedCell = hasExplicitCell(row, "Project Finished?");
+  const statusText = normalizeStatusText([
+    textValue(row, "Project Status"),
+    textValue(row, "PROJECT STATUS"),
+    textValue(row, "Overall Project Status"),
+    textValue(row, "Status"),
+  ].filter(Boolean).join(" "));
+  const hasOpenStatus = /\b(IN PROGRESS|ONGOING|OPEN|EM ANDAMENTO|EM EXECUCAO|EM PROGRESSO)\b/.test(statusText);
+  const hasCompleteStatus = /\b(COMPLETE|COMPLETED|FINISHED|CONCLUIDO|FINALIZADO)\b/.test(statusText);
+  const hasOverall = overall != null;
+  const hasIndividual = individual != null;
+  const below100 = (hasOverall && Number(overall) < 99.9) || (hasIndividual && Number(individual) < 99.9);
+  const relevant = rowHasOperationalItemEvidence(row) || hasFinishedCell || hasOverall || hasIndividual || Boolean(statusText);
+  // Regra oficial Portugal: uma linha explicitamente aberta nunca pode ser mascarada
+  // pela linha raiz, data final ou por outra revisão antiga da mesma TAG.
+  const explicitOpen = Boolean(relevant && (
+    below100
+    || hasOpenStatus
+    || (hasFinishedCell && !finishedFlag)
+  ));
+  const explicitlyFinished = Boolean(relevant && finishedFlag && !below100 && !hasOpenStatus);
+  return {
+    rowId: row?.id ?? null,
+    rowNumber: row?.rowNumber ?? null,
+    relevant,
+    finishedFlag,
+    hasFinishedCell,
+    overall,
+    individual,
+    statusText,
+    hasOpenStatus,
+    hasCompleteStatus,
+    below100,
+    explicitOpen,
+    explicitlyFinished,
+  };
+}
+
+function summarizeSourceRowCompletion(states = []) {
+  const relevant = (Array.isArray(states) ? states : []).filter((item) => item?.relevant);
+  const withCheckbox = relevant.filter((item) => item.hasFinishedCell);
+  const openRows = relevant.filter((item) => item.explicitOpen);
+  const finishedRows = relevant.filter((item) => item.explicitlyFinished);
+  return {
+    totalRows: Array.isArray(states) ? states.length : 0,
+    relevantRows: relevant.length,
+    rowsWithCheckbox: withCheckbox.length,
+    checkedRows: withCheckbox.filter((item) => item.finishedFlag).length,
+    uncheckedRows: withCheckbox.filter((item) => !item.finishedFlag).length,
+    rowsBelow100: relevant.filter((item) => item.below100).length,
+    rowsInProgress: relevant.filter((item) => item.hasOpenStatus).length,
+    openRows: openRows.length,
+    finishedRows: finishedRows.length,
+    openRowNumbers: openRows.map((item) => item.rowNumber).filter((value) => value != null),
+    allExplicitRowsFinished: relevant.length > 0 && openRows.length === 0 && withCheckbox.length > 0 && withCheckbox.every((item) => item.finishedFlag),
+  };
 }
 
 function excelSerialToDate(serial) {
@@ -1629,6 +1694,18 @@ function uiStateFromFlow(flow, allFinished = false) {
 
 function isProjectStrictlyFinished(project) {
   if (!project) return false;
+
+  // v38.17: a decisão final usa primeiro todas as linhas-fonte atribuídas à BSP.
+  // Isso evita que uma linha raiz 100%/marcada finalize linhas de 3%, 9%, 49%, 68%, 97% ou 99%.
+  const sourceDiagnostics = project.sourceCompletionDiagnostics
+    || summarizeSourceRowCompletion(project._sourceRowStates || []);
+  if (sourceDiagnostics.relevantRows > 0) {
+    if (sourceDiagnostics.openRows > 0) return false;
+    if (sourceDiagnostics.rowsWithCheckbox > 0) {
+      return sourceDiagnostics.allExplicitRowsFinished === true;
+    }
+  }
+
   const spools = Array.isArray(project.spools) ? project.spools : [];
   if (spools.length > 0) return spools.every(isSpoolFinishedByState);
   return Boolean(project.projectFinishedFlag === true) && !hasExplicitOpenProgressEvidence(project);
@@ -1950,12 +2027,19 @@ function buildProjects(rows) {
   const projectByRootRowId = new Map();
   const projectByExactKey = new Map();
   const ownerByRowId = new Map();
+  const rowCompletionStateById = new Map((Array.isArray(rows) ? rows : []).map((row) => [row.id, getSourceRowCompletionState(row)]));
+  const allSourceStates = Array.from(rowCompletionStateById.values());
   const diagnostics = {
     rowsTotal: Array.isArray(rows) ? rows.length : 0,
     operationalRows: 0,
     attachedOperationalRows: 0,
     orphanOperationalRows: 0,
     projectsBuilt: 0,
+    sourceRowsBelow100: allSourceStates.filter((item) => item.below100).length,
+    sourceRowsInProgress: allSourceStates.filter((item) => item.hasOpenStatus).length,
+    sourceRowsUnchecked: allSourceStates.filter((item) => item.hasFinishedCell && !item.finishedFlag).length,
+    projectsBlockedBySourceRows: 0,
+    expectedSheetId: PORTUGAL_TRACKING_SHEET_ID,
   };
 
   let currentProject = null;
@@ -2007,6 +2091,7 @@ function buildProjects(rows) {
 
   function createProjectFromRow(row) {
     const project = buildProject(row, [], { deferRollup: true });
+    project._sourceRowStates = [rowCompletionStateById.get(row.id) || getSourceRowCompletionState(row)];
     projects.push(project);
     projectByRootRowId.set(row.id, project);
     ownerByRowId.set(row.id, project);
@@ -2031,6 +2116,8 @@ function buildProjects(rows) {
       },
     };
     project.spools.push(buildSpoolRow(row, parentSummary));
+    if (!Array.isArray(project._sourceRowStates)) project._sourceRowStates = [];
+    project._sourceRowStates.push(rowCompletionStateById.get(row.id) || getSourceRowCompletionState(row));
     ownerByRowId.set(row.id, project);
     diagnostics.attachedOperationalRows += 1;
     return true;
@@ -2107,6 +2194,8 @@ function buildProjects(rows) {
     }
     const unique = Array.from(uniqueMap.values()).sort((a, b) => (Number(a?.rowNumber || 0) - Number(b?.rowNumber || 0)));
     project.spools = unique;
+    project.sourceCompletionDiagnostics = summarizeSourceRowCompletion(project._sourceRowStates || []);
+    if (project.sourceCompletionDiagnostics.openRows > 0) diagnostics.projectsBlockedBySourceRows += 1;
     if (Number(project.quantitySpools || 0) <= 0) project.quantitySpools = unique.length;
     project.spoolStats = unique.reduce((acc, spool) => {
       acc.total += 1;
@@ -2116,6 +2205,7 @@ function buildProjects(rows) {
       return acc;
     }, { total: 0, completed: 0, inProgress: 0, notStarted: 0 });
     decorateProjectTratativaObservation(applyProjectSpoolRollup(project));
+    delete project._sourceRowStates;
   }
 
   diagnostics.projectsBuilt = projects.length;
@@ -2695,11 +2785,10 @@ function normalizeName(value) {
 }
 
 async function resolveSheetId() {
-  if (cache.sheetId) return cache.sheetId;
-  if (SHEET_ID_ENV) {
-    cache.sheetId = SHEET_ID_ENV;
-    return cache.sheetId;
-  }
+  // Portugal possui site e Tracking próprios. Nunca reutilizar ID genérico, cacheado
+  // ou outra planilha com nome parecido.
+  cache.sheetId = PORTUGAL_TRACKING_SHEET_ID;
+  return cache.sheetId;
 
   const target = normalizeName(SHEET_NAME);
   let page = 1;
@@ -3401,6 +3490,11 @@ function payloadProjectHasResolvedCustomerPo(project = {}) {
 
 function isPayloadOperationallyComplete(payload = {}) {
   const projects = Array.isArray(payload.projects) ? payload.projects : [];
+  const payloadSheetId = String(payload?.meta?.sheetId || '').trim();
+  const payloadLogicVersion = String(payload?.meta?.logicVersion || '').trim();
+  // v38.17: não aceitar cache antigo criado por outra planilha ou por lógica anterior.
+  if (payloadSheetId && payloadSheetId !== PORTUGAL_TRACKING_SHEET_ID) return false;
+  if (payloadLogicVersion && payloadLogicVersion !== TRACKING_LOGIC_VERSION) return false;
   if (!projects.length) return true;
 
   // Quando a base complementar de PO respondeu, o payload pode ser usado em cache.

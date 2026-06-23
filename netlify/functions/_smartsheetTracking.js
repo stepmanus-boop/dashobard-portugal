@@ -1,7 +1,8 @@
 const API_BASE = process.env.SMARTSHEET_API_BASE || 'https://api.smartsheet.com/2.0';
 // Build Portugal: leitura e escrita no Tracking PT.
 const SHEET_NAME = process.env.SMARTSHEET_SHEET_NAME_PT || process.env.SMARTSHEET_SHEET_NAME || 'Progress Tracking Sheet - Piping Fabrication PT';
-const SHEET_ID_ENV = process.env.SMARTSHEET_SHEET_ID_PT || process.env.SMARTSHEET_TRACKING_SHEET_ID_PT || process.env.SMARTSHEET_SHEET_ID || '';
+const PORTUGAL_TRACKING_SHEET_ID = '7664451754872708';
+const SHEET_ID_ENV = PORTUGAL_TRACKING_SHEET_ID;
 const TOKEN = process.env.SMARTSHEET_API_KEY_PT
   || process.env.SMARTSHEET_TOKEN_PT
   || process.env.SMARTSHEET_ACCESS_TOKEN_PT
