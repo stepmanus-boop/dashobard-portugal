@@ -5153,22 +5153,38 @@ function handleClientApiModalClick(event) {
   const style = document.createElement('style');
   style.id = 'client-doc-control-styles';
   style.textContent = `
-    .client-doc-shell { max-width: min(1500px, 96vw); }
+    .client-doc-shell { max-width:min(1500px,96vw); background:#dff1fb !important; color:#173a56 !important; }
+    #client-doc-control-content { color:#173a56 !important; }
     .client-doc-loading { padding: 24px; font-size: 14px; opacity: 0.9; }
     .client-doc-table-wrap { max-height: 70vh; overflow: auto; }
-    .client-doc-table { min-width: 1280px; }
-    .client-doc-table thead th { position: sticky; top: 0; z-index: 2; }
+    .client-doc-table { min-width: 1380px; background:#ffffff; }
+    .client-doc-table thead th { position: sticky; top: 0; z-index: 2; background:#164f78 !important; color:#e9f8ff !important; border-bottom:1px solid #d4e3ee !important; }
+    .client-doc-table th,
+    .client-doc-table td { border-bottom:1px solid #d7e5ef !important; }
+    .client-doc-table tbody tr { background:#ffffff !important; cursor:default; }
+    .client-doc-table tbody tr:nth-child(even) { background:#f4f9fc !important; }
+    .client-doc-table tbody tr:hover { background:#e8f4fb !important; }
+    .client-doc-table tbody td { color:#173a56 !important; background:transparent !important; font-weight:700; opacity:1 !important; text-shadow:none !important; }
+    .client-doc-table tbody td a { color:#0b6fa4 !important; }
+    .client-doc-table th:first-child,
+    .client-doc-table td:first-child { min-width:72px !important; width:72px !important; max-width:72px !important; white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; overflow-wrap:normal !important; word-break:normal !important; }
+    .client-doc-table th:nth-child(2),
+    .client-doc-table td:nth-child(2) { min-width:110px !important; width:110px !important; }
+    .client-doc-table th:nth-child(8),
+    .client-doc-table td:nth-child(8) { min-width:220px !important; }
+    .client-doc-table th:nth-child(9),
+    .client-doc-table td:nth-child(9) { min-width:150px !important; }
     .client-doc-status { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-    .client-doc-status--success { background: rgba(54, 179, 126, 0.18); color: #67e8a1; }
-    .client-doc-status--warning { background: rgba(255, 196, 61, 0.18); color: #ffd86b; }
-    .client-doc-status--info { background: rgba(75, 181, 255, 0.18); color: #8dd2ff; }
-    .client-doc-status--muted { background: rgba(255,255,255,0.08); color: #d6dce8; }
-    .client-doc-status--sent { background: rgba(99, 102, 241, 0.18); color: #b8c0ff; }
-    .client-doc-status--neutral { background: rgba(255,255,255,0.12); color: #fff; }
-    .client-doc-attachment-count { display:inline-flex; min-width:28px; height:28px; align-items:center; justify-content:center; border-radius:999px; background:rgba(255,255,255,.08); font-weight:800; }
-    .client-doc-attachment-count.has-files { background:rgba(0,184,255,.18); color:#38d9ff; }
+    .client-doc-status--success { background:#d9f7e5; color:#146c3a; border:1px solid #a7e5c0; }
+    .client-doc-status--warning { background:#fff1c7; color:#8b5d00; border:1px solid #f2d27a; }
+    .client-doc-status--info { background:#dceeff; color:#0b5d91; border:1px solid #afd2ee; }
+    .client-doc-status--muted { background:#eef2f6; color:#475569; border:1px solid #d6dee7; }
+    .client-doc-status--sent { background:#e4e7ff; color:#3746a6; border:1px solid #c4cbff; }
+    .client-doc-status--neutral { background:#edf4f8; color:#27465e; border:1px solid #d2e0e9; }
+    .client-doc-attachment-count { display:inline-flex; min-width:28px; height:28px; align-items:center; justify-content:center; border-radius:999px; background:#e7eef4; color:#27465e; font-weight:900; }
+    .client-doc-attachment-count.has-files { background:#ccefff; color:#006f9f; border:1px solid #8bd6f5; }
     .client-doc-toggle { border:1px solid rgba(8,77,128,.25); background:#fff; color:#0b3a65; border-radius:8px; padding:7px 10px; font-weight:800; cursor:pointer; white-space:nowrap; }
-    .client-doc-detail-row > td { padding:0 !important; background:rgba(4,30,52,.03); }
+    .client-doc-detail-row > td { padding:0 !important; background:#eef6fb !important; color:#173a56 !important; }
     .client-doc-detail-block { padding:18px; }
     .client-doc-detail-block h4 { margin:0 0 12px; color:#0b3a65; }
     .client-doc-all-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-bottom:18px; }
