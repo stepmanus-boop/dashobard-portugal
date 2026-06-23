@@ -1,14 +1,14 @@
-/* STEP Dashboard Portugal v38.17-sheet-7664451754872708 - carregador de compatibilidade.
+/* STEP Dashboard Portugal v38.20-doc-control-files - carregador de compatibilidade.
    O app principal foi dividido em chunks em site/js/ para reduzir bloqueio de carregamento e melhorar cache. */
 (function(){
   if (window.__STEP_APP_CHUNKS_LOADED__) return;
   window.__STEP_APP_CHUNKS_LOADED__ = true;
   var chunks = [
-    './js/app-01-core.js?v=38.19-portugal-doc-control-bsp',
-    './js/app-02-client-portal.js?v=38.19-portugal-doc-control-bsp',
-    './js/app-03-dashboard-render.js?v=38.19-portugal-doc-control-bsp',
-    './js/app-04-data-auth-admin.js?v=38.19-portugal-doc-control-bsp',
-    './js/app-05-stage-login-init.js?v=38.19-portugal-doc-control-bsp'
+    './js/app-01-core.js?v=38.20-portugal-doc-control-files',
+    './js/app-02-client-portal.js?v=38.20-portugal-doc-control-files',
+    './js/app-03-dashboard-render.js?v=38.20-portugal-doc-control-files',
+    './js/app-04-data-auth-admin.js?v=38.20-portugal-doc-control-files',
+    './js/app-05-stage-login-init.js?v=38.20-portugal-doc-control-files'
   ];
   function loadNext(index){
     if (index >= chunks.length) return;

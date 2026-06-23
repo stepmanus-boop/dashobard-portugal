@@ -1,4 +1,4 @@
-const CACHE_NAME = 'step-dashboard-portugal-38.19-doc-control-bsp';
+const CACHE_NAME = 'step-dashboard-portugal-38.20-doc-control-files';
 // - v37.02: revisa performance, otimiza i18n dinâmico/Yinson e preserva apontamentos rápidos
 // Versão v28: preserva cache local entre logouts e usa caminho rápido pós-login
 // - Mantém assets do app shell versionados para liberar app.js corrigido imediatamente
@@ -12,7 +12,7 @@ const CACHE_NAME = 'step-dashboard-portugal-38.19-doc-control-bsp';
 // - v36.52: corrige localização de Tracking por BSP/spool mesmo quando rowId antigo ou campo de avanço está vazio
 // - v36.54: separa carregamento da Validação PCP da consulta Smartsheet para evitar timeout de 30s
 // - v36.59: remove fallback estático antigo e força nova chave de cache por ambiente
-// - v38.19 PT: corrige a busca do Doc Control por BSP, removendo o sufixo de PO antes da consulta e validando todas as páginas da planilha 5007230554296196.
+// - v38.20 PT: corrige a chave BSP sem prefixo e exibe todos os dados e anexos (imagens, PDFs e demais arquivos) do Doc Control.
 // - Percentuais abaixo de 100% e Status In Progress impedem conclusão mesmo quando a raiz está marcada.
 // - v38.14 PT: somente Project Finished? marcado conclui TAG/ISO; 100% sem checkbox continua aberto
 // - v38.13 PT: corrige falsa finalização em massa quando Project Finish Date/progresso 100 coexistem com etapas abertas

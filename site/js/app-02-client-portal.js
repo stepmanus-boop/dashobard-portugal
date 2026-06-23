@@ -3232,7 +3232,20 @@ function ensureClientDocControlModalEl() {
   `;
   document.body.appendChild(modal);
   modal.addEventListener('click', (event) => {
-    if (event.target.closest('[data-client-doc-close]')) closeClientDocControlModal();
+    if (event.target.closest('[data-client-doc-close]')) {
+      closeClientDocControlModal();
+      return;
+    }
+    const toggle = event.target.closest('[data-client-doc-toggle]');
+    if (toggle) {
+      event.preventDefault();
+      const rowId = String(toggle.dataset.clientDocToggle || '');
+      const detailRow = modal.querySelector(`[data-client-doc-detail-row="${CSS.escape(rowId)}"]`);
+      if (detailRow) {
+        detailRow.classList.toggle('hidden');
+        toggle.textContent = detailRow.classList.contains('hidden') ? 'Ver tudo' : 'Ocultar';
+      }
+    }
   });
   return modal;
 }
@@ -3255,9 +3268,11 @@ function getClientDocControlBspCode(project) {
       .replace(/\s*[-–—]\s*PO\b.*$/i, '')
       .replace(/\s+PO\s+[0-9].*$/i, '')
       .trim();
-    const match = withoutPo.match(/\b[A-Z]{1,10}-\d{2,4}-\d{2,8}\b/i);
-    if (match) return match[0].toUpperCase();
-    if (withoutPo) return withoutPo;
+    const full = withoutPo.match(/\b(?:SP|BSP)-?\d{2,4}-\d{2,8}\b/i)
+      || withoutPo.match(/\b[A-Z]{1,10}-\d{2,4}-\d{2,8}\b/i);
+    if (full) return full[0].toUpperCase();
+    const numeric = withoutPo.match(/\b\d{2,4}-\d{2,8}\b/);
+    if (numeric) return `SP-${numeric[0]}`.toUpperCase();
   }
   return '';
 }
@@ -3273,6 +3288,40 @@ function getClientDocControlStatusClass(value) {
   return 'neutral';
 }
 
+function formatClientDocAttachmentSize(sizeInKb) {
+  const size = Number(sizeInKb || 0);
+  if (!size) return '';
+  if (size >= 1024) return `${(size / 1024).toFixed(size >= 10240 ? 0 : 1)} MB`;
+  return `${Math.round(size)} KB`;
+}
+
+function renderClientDocAttachments(row) {
+  const attachments = Array.isArray(row?.attachments) ? row.attachments : [];
+  if (!attachments.length) return '<div class="client-doc-no-files">Nenhum anexo nesta linha.</div>';
+  return `<div class="client-doc-attachments">${attachments.map((attachment) => {
+    const url = escapeHtml(attachment.viewUrl || '');
+    const name = escapeHtml(attachment.name || 'Anexo');
+    const size = formatClientDocAttachmentSize(attachment.sizeInKb);
+    const meta = [attachment.mimeType, size].filter(Boolean).join(' • ');
+    if (attachment.isImage) {
+      return `<a class="client-doc-file client-doc-file--image" href="${url}" target="_blank" rel="noopener noreferrer">
+        <img src="${url}" alt="${name}" loading="lazy" />
+        <span><strong>${name}</strong><small>${escapeHtml(meta || 'Imagem')}</small></span>
+      </a>`;
+    }
+    const icon = attachment.isPdf ? 'PDF' : 'ARQ';
+    return `<a class="client-doc-file" href="${url}" target="_blank" rel="noopener noreferrer">
+      <i>${icon}</i><span><strong>${name}</strong><small>${escapeHtml(meta || 'Arquivo')}</small></span>
+    </a>`;
+  }).join('')}</div>`;
+}
+
+function renderClientDocAllFields(row) {
+  const values = (Array.isArray(row?.values) ? row.values : []).filter((item) => String(item?.value || '').trim());
+  if (!values.length) return '';
+  return `<div class="client-doc-all-fields">${values.map((item) => `<div><span>${escapeHtml(item.key || '')}</span><strong>${escapeHtml(item.value || '—')}</strong></div>`).join('')}</div>`;
+}
+
 function renderClientDocControlTable(payload) {
   const columns = payload?.columns || {};
   const rows = Array.isArray(payload?.rows) ? payload.rows : [];
@@ -3284,6 +3333,7 @@ function renderClientDocControlTable(payload) {
       <table class="client-bsp-table client-doc-table">
         <thead>
           <tr>
+            <th>Linha</th>
             <th>${escapeHtml(columns.primary || 'Primário')}</th>
             <th>${escapeHtml(columns.clientDocNo || 'Client Doc Nº / PO Number')}</th>
             <th>${escapeHtml(columns.book || 'Book')}</th>
@@ -3295,24 +3345,41 @@ function renderClientDocControlTable(payload) {
             <th>${escapeHtml(columns.status || 'Status')}</th>
             <th>${escapeHtml(columns.issuedDate || 'Issued Date')}</th>
             <th>${escapeHtml(columns.returnDate || 'Return Date')}</th>
+            <th>Anexos</th>
+            <th>Detalhes</th>
           </tr>
         </thead>
         <tbody>
-          ${rows.map((row) => `
-            <tr>
-              <td>${escapeHtml(row.primary || '—')}</td>
-              <td>${escapeHtml(row.clientDocNo || '—')}</td>
-              <td>${escapeHtml(row.book || '—')}</td>
-              <td>${escapeHtml(row.cdrCode || '—')}</td>
-              <td>${escapeHtml(row.seqNumber || '—')}</td>
-              <td>${escapeHtml(row.currentRev || '—')}</td>
-              <td>${escapeHtml(row.stepDocNumber || '—')}</td>
-              <td>${escapeHtml(row.documentTitle || '—')}</td>
-              <td><span class="client-doc-status client-doc-status--${getClientDocControlStatusClass(row.status)}">${escapeHtml(row.status || '—')}</span></td>
-              <td>${escapeHtml(row.issuedDate || '—')}</td>
-              <td>${escapeHtml(row.returnDate || '—')}</td>
-            </tr>
-          `).join('')}
+          ${rows.map((row) => {
+            const attachments = Array.isArray(row.attachments) ? row.attachments : [];
+            return `
+              <tr>
+                <td>${escapeHtml(row.rowNumber || '—')}</td>
+                <td>${escapeHtml(row.primary || payload.bsp || '—')}</td>
+                <td>${escapeHtml(row.clientDocNo || '—')}</td>
+                <td>${escapeHtml(row.book || '—')}</td>
+                <td>${escapeHtml(row.cdrCode || '—')}</td>
+                <td>${escapeHtml(row.seqNumber || '—')}</td>
+                <td>${escapeHtml(row.currentRev || '—')}</td>
+                <td>${escapeHtml(row.stepDocNumber || '—')}</td>
+                <td>${escapeHtml(row.documentTitle || '—')}</td>
+                <td><span class="client-doc-status client-doc-status--${getClientDocControlStatusClass(row.status)}">${escapeHtml(row.status || '—')}</span></td>
+                <td>${escapeHtml(row.issuedDate || '—')}</td>
+                <td>${escapeHtml(row.returnDate || '—')}</td>
+                <td><span class="client-doc-attachment-count${attachments.length ? ' has-files' : ''}">${attachments.length}</span></td>
+                <td><button type="button" class="client-doc-toggle" data-client-doc-toggle="${escapeHtml(row.rowId)}">Ver tudo</button></td>
+              </tr>
+              <tr class="client-doc-detail-row hidden" data-client-doc-detail-row="${escapeHtml(row.rowId)}">
+                <td colspan="14">
+                  <div class="client-doc-detail-block">
+                    <h4>Todos os dados da linha ${escapeHtml(row.rowNumber || '')}</h4>
+                    ${renderClientDocAllFields(row)}
+                    <h4>Anexos (${attachments.length})</h4>
+                    ${renderClientDocAttachments(row)}
+                  </div>
+                </td>
+              </tr>`;
+          }).join('')}
         </tbody>
       </table>
     </div>`;
@@ -3355,7 +3422,7 @@ function openClientDocControlModal(project) {
           <div>
             <p class="client-kicker">Doc control (Exibir somente)</p>
             <h2>${escapeHtml(data.bsp || bsp || 'BSP')}</h2>
-            <p>${escapeHtml(getProjectClientLabel(project))} • ${escapeHtml(getProjectVesselLabel(project))} • ${escapeHtml(data.total || 0)} documento(s)</p>
+            <p>${escapeHtml(getProjectClientLabel(project))} • ${escapeHtml(getProjectVesselLabel(project))} • ${escapeHtml(data.total || 0)} documento(s) • ${escapeHtml(data.attachmentTotal || 0)} anexo(s)</p>
           </div>
         </header>
         ${renderClientDocControlTable(data)}
@@ -5098,6 +5165,25 @@ function handleClientApiModalClick(event) {
     .client-doc-status--muted { background: rgba(255,255,255,0.08); color: #d6dce8; }
     .client-doc-status--sent { background: rgba(99, 102, 241, 0.18); color: #b8c0ff; }
     .client-doc-status--neutral { background: rgba(255,255,255,0.12); color: #fff; }
+    .client-doc-attachment-count { display:inline-flex; min-width:28px; height:28px; align-items:center; justify-content:center; border-radius:999px; background:rgba(255,255,255,.08); font-weight:800; }
+    .client-doc-attachment-count.has-files { background:rgba(0,184,255,.18); color:#38d9ff; }
+    .client-doc-toggle { border:1px solid rgba(8,77,128,.25); background:#fff; color:#0b3a65; border-radius:8px; padding:7px 10px; font-weight:800; cursor:pointer; white-space:nowrap; }
+    .client-doc-detail-row > td { padding:0 !important; background:rgba(4,30,52,.03); }
+    .client-doc-detail-block { padding:18px; }
+    .client-doc-detail-block h4 { margin:0 0 12px; color:#0b3a65; }
+    .client-doc-all-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-bottom:18px; }
+    .client-doc-all-fields > div { background:#fff; border:1px solid rgba(7,60,102,.12); border-radius:10px; padding:10px 12px; }
+    .client-doc-all-fields span { display:block; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#55738d; margin-bottom:4px; }
+    .client-doc-all-fields strong { display:block; color:#0c365b; font-size:13px; overflow-wrap:anywhere; }
+    .client-doc-attachments { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; }
+    .client-doc-file { display:flex; align-items:center; gap:12px; min-height:74px; padding:10px; border-radius:12px; border:1px solid rgba(8,77,128,.15); background:#fff; color:#0b3a65; text-decoration:none; overflow:hidden; }
+    .client-doc-file:hover { border-color:#109ad6; box-shadow:0 6px 18px rgba(6,63,103,.12); }
+    .client-doc-file > i { width:48px; height:48px; border-radius:10px; display:flex; align-items:center; justify-content:center; flex:0 0 auto; background:#eaf5fc; color:#0d7fb3; font-style:normal; font-weight:900; }
+    .client-doc-file--image img { width:72px; height:58px; object-fit:cover; border-radius:8px; flex:0 0 auto; background:#eef4f8; }
+    .client-doc-file span { min-width:0; }
+    .client-doc-file strong { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .client-doc-file small { display:block; margin-top:4px; color:#6b8397; }
+    .client-doc-no-files { color:#6b8397; padding:8px 0; }
   `;
   document.head.appendChild(style);
 })();

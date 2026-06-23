@@ -26,8 +26,8 @@ const DOC_CONTROL_SHEET_ID = String(
 const FETCH_TIMEOUT_MS = Number(process.env.SMARTSHEET_FETCH_TIMEOUT_MS || 20000);
 const CACHE_MS = Number(process.env.CLIENT_DOC_CONTROL_CACHE_MS || 5 * 60 * 1000);
 
-const globalCache = global.__STEP_CLIENT_DOC_CONTROL_CACHE__ || { bySheet: {} };
-global.__STEP_CLIENT_DOC_CONTROL_CACHE__ = globalCache;
+const globalCache = global.__STEP_CLIENT_DOC_CONTROL_CACHE_V3820__ || { bySheet: {} };
+global.__STEP_CLIENT_DOC_CONTROL_CACHE_V3820__ = globalCache;
 
 function normalizeText(value) {
   return String(value || '')
@@ -48,21 +48,28 @@ function extractBspKey(value) {
     .replace(/\s*[-–—]\s*PO\b.*$/i, '')
     .replace(/\s+PO\s+[0-9].*$/i, '')
     .trim();
-  const patterns = [
-    /\b[A-Z]{1,10}-\d{2,4}-\d{2,8}\b/i,
-    /\bBSP\s*[-/]?\s*\d{2,4}\s*[-/]\s*\d{2,8}\b/i,
-  ];
-  for (const pattern of patterns) {
-    const match = withoutPo.match(pattern);
-    if (match) return match[0].replace(/\s+/g, '').replace(/\//g, '-').toUpperCase();
-  }
+  const full = withoutPo.match(/\b(?:SP|BSP)-?\d{2,4}-\d{2,8}\b/i)
+    || withoutPo.match(/\b[A-Z]{1,10}-\d{2,4}-\d{2,8}\b/i);
+  if (full) return full[0].replace(/\s+/g, '').replace(/\//g, '-').toUpperCase();
+  const numeric = withoutPo.match(/\b\d{2,4}-\d{2,8}\b/);
+  if (numeric) return `SP-${numeric[0]}`.toUpperCase();
   return withoutPo.toUpperCase();
 }
 
+function bspIdentity(value) {
+  const extracted = extractBspKey(value);
+  const full = compact(extracted);
+  const numericMatch = extracted.match(/(\d{2,4})-(\d{2,8})/);
+  const numeric = numericMatch ? `${numericMatch[1]}-${numericMatch[2]}` : '';
+  return { extracted, full, numeric: compact(numeric) };
+}
+
 function bspKeysEqual(a, b) {
-  const left = compact(extractBspKey(a));
-  const right = compact(extractBspKey(b));
-  return Boolean(left && right && left === right);
+  const left = bspIdentity(a);
+  const right = bspIdentity(b);
+  if (!left.full || !right.full) return false;
+  if (left.full === right.full) return true;
+  return Boolean(left.numeric && right.numeric && left.numeric === right.numeric);
 }
 
 function buildQuery(params = {}) {
@@ -177,6 +184,44 @@ function rowMatchesBsp(row, cellsById, meta, bspKey) {
   return false;
 }
 
+function normalizeAttachment(att, rowId, source = 'row') {
+  if (!att || !att.id) return null;
+  const name = String(att.name || `Attachment ${att.id}`).trim();
+  const mimeType = String(att.mimeType || '').trim();
+  const lower = name.toLowerCase();
+  const isImage = mimeType.toLowerCase().startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|heic|heif)$/i.test(lower);
+  const isPdf = mimeType.toLowerCase() === 'application/pdf' || /\.pdf$/i.test(lower);
+  return {
+    id: String(att.id),
+    rowId: String(rowId || ''),
+    source,
+    name,
+    mimeType,
+    sizeInKb: Number(att.sizeInKb || 0) || null,
+    createdAt: att.createdAt || '',
+    createdBy: att.createdBy?.name || att.createdBy?.email || '',
+    isImage,
+    isPdf,
+    viewUrl: `/api/client-doc-control-attachment?attachmentId=${encodeURIComponent(att.id)}&sheetId=${encodeURIComponent(DOC_CONTROL_SHEET_ID)}`,
+  };
+}
+
+function collectRowAttachments(row) {
+  const map = new Map();
+  const add = (att, source) => {
+    const item = normalizeAttachment(att, row?.id, source);
+    if (item && !map.has(item.id)) map.set(item.id, item);
+  };
+  for (const att of Array.isArray(row?.attachments) ? row.attachments : []) add(att, 'row');
+  for (const discussion of Array.isArray(row?.discussions) ? row.discussions : []) {
+    for (const att of Array.isArray(discussion?.attachments) ? discussion.attachments : []) add(att, 'discussion');
+    for (const comment of Array.isArray(discussion?.comments) ? discussion.comments : []) {
+      for (const att of Array.isArray(comment?.attachments) ? comment.attachments : []) add(att, 'comment');
+    }
+  }
+  return Array.from(map.values());
+}
+
 function formatRow(row, cellsById, meta) {
   const orderedValues = meta.byIndex.map((item) => ({
     key: item.title,
@@ -184,6 +229,7 @@ function formatRow(row, cellsById, meta) {
   }));
   return {
     rowId: row.id,
+    rowNumber: row.rowNumber || null,
     primary: pickCellByMeta(cellsById, meta.primary),
     clientDocNo: pickCellByMeta(cellsById, meta.clientDocNo),
     book: pickCellByMeta(cellsById, meta.book),
@@ -196,6 +242,7 @@ function formatRow(row, cellsById, meta) {
     issuedDate: pickCellByMeta(cellsById, meta.issuedDate),
     returnDate: pickCellByMeta(cellsById, meta.returnDate),
     values: orderedValues,
+    attachments: collectRowAttachments(row),
   };
 }
 
@@ -203,7 +250,7 @@ async function loadSheetRows(force = false) {
   const cacheEntry = globalCache.bySheet[DOC_CONTROL_SHEET_ID];
   if (!force && cacheEntry && (Date.now() - cacheEntry.loadedAt) < CACHE_MS) return cacheEntry;
 
-  const firstPage = await apiFetch(`/sheets/${encodeURIComponent(DOC_CONTROL_SHEET_ID)}${buildQuery({ level: 2, page: 1, pageSize: 5000, include: 'objectValue' })}`);
+  const firstPage = await apiFetch(`/sheets/${encodeURIComponent(DOC_CONTROL_SHEET_ID)}${buildQuery({ level: 2, page: 1, pageSize: 5000, include: 'objectValue,attachments,discussions' })}`);
   if (!firstPage || !Array.isArray(firstPage.columns) || !Array.isArray(firstPage.rows)) {
     throw new Error('Doc Control sheet returned no rows/columns.');
   }
@@ -211,7 +258,7 @@ async function loadSheetRows(force = false) {
   const rows = [...firstPage.rows];
   const totalPages = Math.max(1, Number(firstPage.totalPages || 1));
   for (let page = 2; page <= totalPages; page += 1) {
-    const response = await apiFetch(`/sheets/${encodeURIComponent(DOC_CONTROL_SHEET_ID)}${buildQuery({ level: 2, page, pageSize: 5000, include: 'objectValue' })}`);
+    const response = await apiFetch(`/sheets/${encodeURIComponent(DOC_CONTROL_SHEET_ID)}${buildQuery({ level: 2, page, pageSize: 5000, include: 'objectValue,attachments,discussions' })}`);
     if (Array.isArray(response?.rows)) rows.push(...response.rows);
   }
 
@@ -265,6 +312,8 @@ exports.handler = async (event) => {
       sheetId: cache.sheetId,
       sheetName: cache.sheetName,
       rows: items,
+      attachmentTotal: items.reduce((sum, item) => sum + (Array.isArray(item.attachments) ? item.attachments.length : 0), 0),
+      columnOrder: cache.meta.byIndex.map((item) => item.title).filter(Boolean),
       columns: {
         primary: cache.meta.primary?.title || 'Primário',
         clientDocNo: cache.meta.clientDocNo?.title || 'Client Doc Nº / PO Number',
