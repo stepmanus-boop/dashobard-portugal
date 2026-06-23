@@ -3239,15 +3239,25 @@ function ensureClientDocControlModalEl() {
 
 function getClientDocControlBspCode(project) {
   const candidates = [
-    getClientProjectDisplayCode(project),
+    project?.projectNumber,
+    project?.projectDisplay,
     project?.project,
     project?.projectCode,
     project?.bsp,
     project?.bspKey,
     project?.name,
+    getClientProjectDisplayCode(project),
   ];
   for (const value of candidates) {
-    if (value && String(value).trim()) return String(value).trim();
+    const original = String(value || '').trim();
+    if (!original) continue;
+    const withoutPo = original
+      .replace(/\s*[-–—]\s*PO\b.*$/i, '')
+      .replace(/\s+PO\s+[0-9].*$/i, '')
+      .trim();
+    const match = withoutPo.match(/\b[A-Z]{1,10}-\d{2,4}-\d{2,8}\b/i);
+    if (match) return match[0].toUpperCase();
+    if (withoutPo) return withoutPo;
   }
   return '';
 }

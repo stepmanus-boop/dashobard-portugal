@@ -41,6 +41,30 @@ function compact(value) {
   return normalizeText(value).replace(/[^a-z0-9]+/g, '');
 }
 
+function extractBspKey(value) {
+  const original = String(value || '').trim();
+  if (!original) return '';
+  const withoutPo = original
+    .replace(/\s*[-–—]\s*PO\b.*$/i, '')
+    .replace(/\s+PO\s+[0-9].*$/i, '')
+    .trim();
+  const patterns = [
+    /\b[A-Z]{1,10}-\d{2,4}-\d{2,8}\b/i,
+    /\bBSP\s*[-/]?\s*\d{2,4}\s*[-/]\s*\d{2,8}\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = withoutPo.match(pattern);
+    if (match) return match[0].replace(/\s+/g, '').replace(/\//g, '-').toUpperCase();
+  }
+  return withoutPo.toUpperCase();
+}
+
+function bspKeysEqual(a, b) {
+  const left = compact(extractBspKey(a));
+  const right = compact(extractBspKey(b));
+  return Boolean(left && right && left === right);
+}
+
 function buildQuery(params = {}) {
   const entries = Object.entries(params).filter(([, value]) => value !== undefined && value !== null && String(value) !== '');
   if (!entries.length) return '';
@@ -136,16 +160,19 @@ function pickCellByMeta(cellsById, metaItem) {
   return getCellValue(cellsById.get(String(metaItem.column.id)));
 }
 
-function rowMatchesBsp(row, cellsById, meta, bspNeedle) {
+function rowMatchesBsp(row, cellsById, meta, bspKey) {
   const primaryValue = pickCellByMeta(cellsById, meta.primary);
-  if (compact(primaryValue) === bspNeedle) return true;
+  if (bspKeysEqual(primaryValue, bspKey)) return true;
+
   const stepDocNumber = pickCellByMeta(cellsById, meta.stepDocNumber);
-  if (compact(stepDocNumber).includes(bspNeedle)) return true;
+  const stepDocBsp = extractBspKey(stepDocNumber);
+  if (bspKeysEqual(stepDocBsp, bspKey)) return true;
+
   for (const cell of row.cells || []) {
     const value = getCellValue(cell);
     if (!value) continue;
-    if (compact(value) === bspNeedle) return true;
-    if (compact(value).startsWith(`${bspNeedle}`)) return true;
+    const valueBsp = extractBspKey(value);
+    if (bspKeysEqual(valueBsp, bspKey)) return true;
   }
   return false;
 }
@@ -176,17 +203,25 @@ async function loadSheetRows(force = false) {
   const cacheEntry = globalCache.bySheet[DOC_CONTROL_SHEET_ID];
   if (!force && cacheEntry && (Date.now() - cacheEntry.loadedAt) < CACHE_MS) return cacheEntry;
 
-  const sheet = await apiFetch(`/sheets/${encodeURIComponent(DOC_CONTROL_SHEET_ID)}${buildQuery({ level: 2, pageSize: 5000, include: 'objectValue' })}`);
-  if (!sheet || !Array.isArray(sheet.columns) || !Array.isArray(sheet.rows)) {
+  const firstPage = await apiFetch(`/sheets/${encodeURIComponent(DOC_CONTROL_SHEET_ID)}${buildQuery({ level: 2, page: 1, pageSize: 5000, include: 'objectValue' })}`);
+  if (!firstPage || !Array.isArray(firstPage.columns) || !Array.isArray(firstPage.rows)) {
     throw new Error('Doc Control sheet returned no rows/columns.');
   }
-  const meta = buildSheetMetadata(sheet.columns);
+
+  const rows = [...firstPage.rows];
+  const totalPages = Math.max(1, Number(firstPage.totalPages || 1));
+  for (let page = 2; page <= totalPages; page += 1) {
+    const response = await apiFetch(`/sheets/${encodeURIComponent(DOC_CONTROL_SHEET_ID)}${buildQuery({ level: 2, page, pageSize: 5000, include: 'objectValue' })}`);
+    if (Array.isArray(response?.rows)) rows.push(...response.rows);
+  }
+
+  const meta = buildSheetMetadata(firstPage.columns);
   const payload = {
     loadedAt: Date.now(),
-    sheetId: String(sheet.id || DOC_CONTROL_SHEET_ID),
-    sheetName: sheet.name || 'Doc Control',
+    sheetId: String(firstPage.id || DOC_CONTROL_SHEET_ID),
+    sheetName: firstPage.name || 'Doc Control',
     meta,
-    rows: sheet.rows,
+    rows,
   };
   globalCache.bySheet[DOC_CONTROL_SHEET_ID] = payload;
   return payload;
@@ -198,11 +233,11 @@ exports.handler = async (event) => {
 
   try {
     const query = event.queryStringParameters || {};
-    const bsp = String(query.bsp || query.project || '').trim();
+    const requestedBsp = String(query.bsp || query.project || '').trim();
+    const bsp = extractBspKey(requestedBsp);
     if (!bsp) return jsonResponse(400, { ok: false, error: 'BSP not informed.' });
 
     const cache = await loadSheetRows(String(query.force || '') === '1');
-    const bspNeedle = compact(bsp);
     const items = [];
 
     for (const row of cache.rows || []) {
@@ -210,7 +245,7 @@ exports.handler = async (event) => {
       for (const cell of row.cells || []) {
         cellsById.set(String(cell.columnId), cell);
       }
-      if (!rowMatchesBsp(row, cellsById, cache.meta, bspNeedle)) continue;
+      if (!rowMatchesBsp(row, cellsById, cache.meta, bsp)) continue;
       items.push(formatRow(row, cellsById, cache.meta));
     }
 
@@ -225,6 +260,7 @@ exports.handler = async (event) => {
     return jsonResponse(200, {
       ok: true,
       bsp,
+      requestedBsp,
       total: items.length,
       sheetId: cache.sheetId,
       sheetName: cache.sheetName,

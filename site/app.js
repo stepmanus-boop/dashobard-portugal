@@ -4,11 +4,11 @@
   if (window.__STEP_APP_CHUNKS_LOADED__) return;
   window.__STEP_APP_CHUNKS_LOADED__ = true;
   var chunks = [
-    './js/app-01-core.js?v=38.18-portugal-doc-control',
-    './js/app-02-client-portal.js?v=38.18-portugal-doc-control',
-    './js/app-03-dashboard-render.js?v=38.18-portugal-doc-control',
-    './js/app-04-data-auth-admin.js?v=38.18-portugal-doc-control',
-    './js/app-05-stage-login-init.js?v=38.18-portugal-doc-control'
+    './js/app-01-core.js?v=38.19-portugal-doc-control-bsp',
+    './js/app-02-client-portal.js?v=38.19-portugal-doc-control-bsp',
+    './js/app-03-dashboard-render.js?v=38.19-portugal-doc-control-bsp',
+    './js/app-04-data-auth-admin.js?v=38.19-portugal-doc-control-bsp',
+    './js/app-05-stage-login-init.js?v=38.19-portugal-doc-control-bsp'
   ];
   function loadNext(index){
     if (index >= chunks.length) return;
